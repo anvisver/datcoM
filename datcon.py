@@ -1,985 +1,792 @@
-import math
-import argparse
+from enum import Enum, auto
+import time
+
+# Define possible error types for the custom datetime system
+class DatconErrorType(Enum):
+    UNCORRECT_VALUE        = auto()
+    TOO_MANY_PARAMETERS    = auto()
+    UNCORRECT_INPUT_VALUE  = auto()
+    F_IN_TEMPLATE          = auto()
+    TOO_MANY_VALUES        = auto()
+    UNREGISTERED_OPERATION = auto()
+    UNKNOWN                = auto()
+
+
+class DatconError(Exception):
+    """
+    Detailed exception for Datcon operations.
+
+    Attributes:
+        error_type   (DatconErrorType): kind of error
+        place        (str): name of the method or step
+        template     (Optional[str]): format template involved
+        value        (Any): the offending input or intermediate value
+        anchor_date  (Optional[float]): current ANCHOR_RAWTIME, if relevant
+        critical     (bool): whether this should abort execution
+    """
+    __module__ = "builtins"
+    def __init__(self,
+                error_type: DatconErrorType,
+                place: str,
+                template: str = None,
+                value: object = None,
+                anchor_date: float = None,
+                critical: bool = False):
+        self.error_type  = error_type
+        self.place       = place
+        self.value       = value
+        self.template    = template
+        self.anchor_date = anchor_date
+        self.critical    = critical
+
+        # Build message components
+        parts = [f" [{place}] {error_type.name.replace('_',' ').title()}"]
+
+        if template is not None:
+            parts.append(f"Template: {template!r}")
+
+        if value is not None:
+            parts.append(f"Value: {value!r}")
+
+        if anchor_date is not None:
+            parts.append(f"Anchor rawtime: {anchor_date}")
+
+        # Add tailored hint
+        hint = self._suggest_fix()
+        if hint:
+            parts.append(f"Hint: {hint}\n")
+
+        msg = "\n" + " \n ".join(parts)
+        super().__init__(msg)
+
+    def _suggest_fix(self) -> str:
+        # Provide specific hints for known cases
+        if self.place == "intptime":
+            if self.error_type is DatconErrorType.UNCORRECT_INPUT_VALUE:
+                return "Ensure you passed a list of 6 numbers [Y,m,d,h,i,s]."
+            if self.error_type in (DatconErrorType.TOO_MANY_VALUES,
+                                DatconErrorType.TOO_MANY_PARAMETERS):
+                return "Match the number of values to the template length."
+        if self.place == "strptime":
+            if self.error_type is DatconErrorType.UNCORRECT_INPUT_VALUE:
+                return "Pass a string matching your template."
+            if self.error_type in (DatconErrorType.TOO_MANY_VALUES,
+                                DatconErrorType.TOO_MANY_PARAMETERS):
+                return "Check that template tokens and digits in the string align."
+        return "No hints available"
+
+    def __str__(self):
+        return self.args[0]
+
+
+# Define possible calendar epochs
+class EpochType(Enum):
+    AC = "ac"  # After Christ (default)
+    BC = "bc"  # Before Christ
+
+    @property
+    def epoch_offset(self) -> float:
+        return 0.0
+
+# Export enum for easier external use
+AC = EpochType.AC
+BC = EpochType.BC
+
 
 class Datetime_support:
+    # --- Extract only part of the datetime and compute rawtime accordingly ---
+
     def time(self):
-        """
-        returns the (hour-minute-second) values of the datetime object
-        """
-        if self.rawtime < 0:
-            self.charge = "-"
-            self.rawtime = abs(self.rawtime)
-        else:
-            self.charge = "+"
-        rawtime_without_leaps = self.rawtime - self.all_leap_days * self.time_units["d"]
-        support = self.Backend(rawtime_without_leaps, "from_rawtime_to_datetime")
-        hour, minute, second = support[3], support[4], support[5]
-        rawtime_with_leaps = (
-            hour * self.time_units["h"]
-            + minute * self.time_units["M"]
-            + second * self.time_units["s"]
-        )
-        self.rawtime = rawtime_with_leaps
-        self.output = ["time", [0, 0, 0, hour, minute, second]]
-        if self.charge == "-":
-            self.rawtime = -self.rawtime
+        """Extract time (h:i:s) only and compute corresponding rawtime."""
+        h, i, s = self.output[0][3:6]
+        self.output = [[0,1,1,h,i,s], "time"]
+        secs = h*3600 + i*60 + s
+        self.rawtime = secs + self.epoch_type.epoch_offset
+        print(self.output)
         return self
 
     def date(self):
-        """
-        returns the (year-month-day) values of the datetime object
-        """
-        if self.rawtime < 0:
-            self.charge = "-"
-            self.rawtime = abs(self.rawtime)
-        else:
-            self.charge = "+"
-        raw_no_leaps = self.rawtime - self.all_leap_days * self.time_units["d"]
-        year, month, day, _, _, _ = self.Backend(raw_no_leaps, "from_rawtime_to_datetime")
-        result, self.leap, self.all_leap_days = self.Backend(
-            [year, month, day, 0, 0, 0], "from_rawtimeget_leapyears"
-        )
-        rawtime = 0.0
-        for unit, value in zip(self.template, result):
-            if unit == "m":
-                for m in range(1, value):
-                    rawtime += self.time_units["m"][m]
-            elif unit == "d":
-                if value >= 1:
-                    rawtime += (value - 1) * self.time_units["d"]
-            elif isinstance(self.time_units[unit], dict):
-                for k in range(1, value + 1):
-                    rawtime += self.time_units[unit][k]
-            else:
-                rawtime += value * self.time_units[unit]
-        self.rawtime = rawtime
-        self.output = ["date", [year, month, day, 0, 0, 0]]
-        if self.charge == "-":
-            self.rawtime = -self.rawtime
+        """Extract date (Y:m:d) only and compute rawtime."""
+        Y, m, d = self.output[0][:3]
+        self.output = [[Y,m,d,0,0,0], "date"]
+        raw = convert_input_to_rawtime([Y,m,d,0,0,0], ['Y','m','d','h','i','s'])
+        self.rawtime = raw + self.epoch_type.epoch_offset
         return self
 
     def year(self):
-        if self.rawtime < 0:
-            self.charge = "-"
-            self.rawtime = abs(self.rawtime)
-        else:
-            self.charge = "+"
-        
-        raw_no_leaps = self.rawtime - self.all_leap_days * self.time_units["d"]
-        year, _, _, _, _, _ = self.Backend(raw_no_leaps, "from_rawtime_to_datetime")
-        self.rawtime = year * self.time_units["Y"] + self.all_leap_days * self.time_units["d"]
-        self.output = ["year", [year, 0, 0, 0, 0, 0]]
-        if self.charge == "-":
-            self.rawtime = -self.rawtime
+        """Extract year only and compute rawtime."""
+        Y = self.output[0][0]
+        self.output = [[Y,0,0,0,0,0], "year"]
+        raw = convert_input_to_rawtime([Y,1,1,0,0,0], ['Y','m','d','h','i','s'])
+        self.rawtime = raw + self.epoch_type.epoch_offset
         return self
 
     def month(self):
-        if self.rawtime < 0:
-            self.charge = "-"
-            self.rawtime = abs(self.rawtime)
-        else:
-            self.charge = "+"
-        raw_no_leaps = self.rawtime - self.all_leap_days * self.time_units["d"]
-        _, month, _, _, _, _ = self.Backend(raw_no_leaps, "from_rawtime_to_datetime")
-        result, self.leap, self.all_leap_days = self.Backend(
-            [0, month, 0, 0, 0, 0], "from_rawtimeget_leapyears"
-        )
-        rawtime = 0.0
-        for unit, value in zip(self.template, result):
-            if unit == "m":
-                for m in range(1, value):
-                    rawtime += self.time_units["m"][m]
-            elif unit == "d":
-                rawtime += value * self.time_units["d"]
-            elif isinstance(self.time_units[unit], dict):
-                for k in range(1, value + 1):
-                    rawtime += self.time_units[unit][k]
-            else:
-                rawtime += value * self.time_units[unit]
-        self.rawtime = rawtime
-        self.output = ["month", [0, month, 0, 0, 0, 0]]
-        if self.charge == "-":
-            self.rawtime = -self.rawtime
+        """Extract month only and compute rawtime."""
+        m = self.output[0][1]
+        self.output = [[0,m,0,0,0,0], "month"]
+        raw = convert_input_to_rawtime([0,m,1,0,0,0], ['Y','m','d','h','i','s'])
+        self.rawtime = raw + self.epoch_type.epoch_offset
         return self
 
     def day(self):
-        if self.rawtime < 0:
-            self.charge = "-"
-            self.rawtime = abs(self.rawtime)
-        else:
-            self.charge = "+"
-        raw_no_leaps = self.rawtime - self.all_leap_days * self.time_units["d"]
-        _, _, day, _, _, _ = self.Backend(raw_no_leaps, "from_rawtime_to_datetime")
-        self.rawtime = (day - 1) * self.time_units["d"]
-        self.output = ["day", [0, 0, day, 0, 0, 0]]
-        if self.charge == "-":
-            self.rawtime = -self.rawtime
+        """Extract day only and compute rawtime."""
+        d = self.output[0][2]
+        self.output = [[0,1,d,0,0,0], "day"]
+        raw = convert_input_to_rawtime([0,1,d,0,0,0], ['Y','m','d','h','i','s'])
+        self.rawtime = raw + self.epoch_type.epoch_offset
         return self
 
     def hour(self):
-        """
-        returns the (hour) values of the datetime object
-        """
-        if self.rawtime < 0:
-            self.charge = "-"
-            self.rawtime = abs(self.rawtime)
-        else:
-            self.charge = "+"
-        raw_no_leaps = self.rawtime - self.all_leap_days * self.time_units["d"]
-        _, _, _, hour, _, _ = self.Backend(raw_no_leaps, "from_rawtime_to_datetime")
-        self.rawtime = hour * self.time_units["h"]
-        self.output = ["hour", [0, 0, 0, hour, 0, 0]]
-        if self.charge == "-":
-            self.rawtime = -self.rawtime
+        """Extract hour only and compute rawtime."""
+        h = self.output[0][3]
+        self.output = [[0,1,1,h,0,0], "hour"]
+        raw = h*3600
+        self.rawtime = raw + self.epoch_type.epoch_offset
         return self
 
     def minute(self):
-        """
-        returns the (minute) values of the datetime object
-        """
-        if self.rawtime < 0:
-            self.charge = "-"
-            self.rawtime = abs(self.rawtime)
-        else:
-            self.charge = "+"
-        raw_no_leaps = self.rawtime - self.all_leap_days * self.time_units["d"]
-        _, _, _, _, minute, _ = self.Backend(raw_no_leaps, "from_rawtime_to_datetime")
-        self.rawtime = minute * self.time_units["M"]
-        self.output = ["minute", [0, 0, 0, 0, minute, 0]]
-        if self.charge == "-":
-            self.rawtime = -self.rawtime
+        """Extract minute only and compute rawtime."""
+        i = self.output[0][4]
+        self.output = [[0,1,1,0,i,0], "minute"]
+        raw = i*60
+        self.rawtime = raw + self.epoch_type.epoch_offset
         return self
 
     def second(self):
-        """
-        returns the (second) values of the datetime object
-        """
-        if self.rawtime < 0:
-            self.charge = "-"
-            self.rawtime = abs(self.rawtime)
-        else:
-            self.charge = "+"
-        raw_no_leaps = self.rawtime - self.all_leap_days * self.time_units["d"]
-        _, _, _, _, _, second = self.Backend(raw_no_leaps, "from_rawtime_to_datetime")
-        self.rawtime = second * self.time_units["s"] 
-        self.output = ["second", [0, 0, 0, 0, 0, second]]
-        if self.charge == "-":
-            self.rawtime = -self.rawtime
+        """Extract second only and compute rawtime."""
+        s = self.output[0][5]
+        self.output = [[0,1,1,0,0,s], "second"]
+        raw = s
+        self.rawtime = raw + self.epoch_type.epoch_offset
         return self
 
     def offset(self):
-        self.rawtime = 0
-        self.output = ["fulldatetime", [0, 0, 0, 0, 0, 0]]
+        """Reset datetime to just the epoch offset."""
+        self.rawtime = self.epoch_type.epoch_offset
+        self.output = ["fulldatetime", [0,0,0,0,0,0]]
         return self
+
+    # Display methods (do not change rawtime)
+    def time_show(self):
+        """Change output type to 'time' for display."""
+        return self.Parser("time")
+
+    def date_show(self):
+        """Change output type to 'date' for display."""
+        return self.Parser("date")
+
+    def year_show(self):
+        return self.Parser("year")
+
+    def month_show(self):
+        return self.Parser("month")
+
+    def day_show(self):
+        return self.Parser("day")
+
+    def hour_show(self):
+        return self.Parser("hour")
+
+    def minute_show(self):
+        return self.Parser("minute")
+
+    def second_show(self):
+        return self.Parser("second")
+
+    def Parser(self, type_swap):
+        """Internal helper to set output type label."""
+        pieces, _ = self.output
+        self.output = [pieces, type_swap]
+        return self
+
 class Maths_Support:
     """
-    Maths_Support class meant to give main-class datetime flexibility when it comes to mathematical operations
+    Maths_Support provides arithmetic and comparison operations based on rawtime,
+    enabling datetime objects to support intuitive math operations directly.
+
+    These operations act upon the `rawtime` attribute, which represents time in seconds
+    from a defined epoch.
     """
     def __init__(self, rawtime):
         self.rawtime = rawtime
 
     def __add__(self, other):
+        """
+        Add a scalar value (seconds) or another datetime's rawtime to this instance.
+        Returns a new datetime object.
+        """
         if isinstance(other, Maths_Support):
             return datetime.operand(self.rawtime + other.rawtime)
         elif isinstance(other, (int, float)):
             return datetime.operand(self.rawtime + other)
-        return DatconError(False,[self,other],"unregistered operation","Maths_Support",True)
+        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, None, [self, other], ["Maths_Support", "__add__"], True)
 
     def __sub__(self, other):
+        """
+        Subtract a scalar or another datetime's rawtime from this instance.
+        Returns a new datetime object.
+        """
         if isinstance(other, Maths_Support):
             return datetime.operand(self.rawtime - other.rawtime)
         elif isinstance(other, (int, float)):
             return datetime.operand(self.rawtime - other)
-        return DatconError(False,[self,other],"unregistered operation","Maths_Support",True)
+        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, None, [self, other], ["Maths_Support", "__sub__"], True)
 
     def __mul__(self, other):
+        """
+        Multiply this instance's rawtime with a scalar or another datetime's rawtime.
+        Useful for scaling durations.
+        Returns a new datetime object.
+        """
         if isinstance(other, Maths_Support):
             return datetime.operand(self.rawtime * other.rawtime)
         elif isinstance(other, (int, float)):
             return datetime.operand(self.rawtime * other)
-        return DatconError(False,[self,other],"unregistered operation","Maths_Support",True)
+        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, None, [self, other], ["Maths_Support", "__mul__"], True)
 
     def __truediv__(self, other):
+        """
+        Perform true division of this instance's rawtime by a scalar or another rawtime.
+        Returns a new datetime object.
+        """
         if isinstance(other, Maths_Support):
             return datetime.operand(self.rawtime / other.rawtime)
         elif isinstance(other, (int, float)):
             return datetime.operand(self.rawtime / other)
-        return DatconError(False,[self,other],"unregistered operation","Maths_Support",True)
+        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, None, [self, other], ["Maths_Support", "__truediv__"], True)
 
     def __floordiv__(self, other):
+        """
+        Perform floor division on rawtime.
+        Rounds down the result to the nearest integer.
+        Returns a new datetime object.
+        """
         if isinstance(other, Maths_Support):
             return datetime.operand(self.rawtime // other.rawtime)
         elif isinstance(other, (int, float)):
             return datetime.operand(self.rawtime // other)
-        return DatconError(False,[self,other],"unregistered operation","Maths_Support",True)
+        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, None, [self, other], ["Maths_Support", "__floordiv__"], True)
 
     def __mod__(self, other):
+        """
+        Return the remainder after dividing rawtime by scalar or another rawtime.
+        Useful for measuring periodic cycles.
+        Returns a float.
+        """
         if isinstance(other, Maths_Support):
             return self.rawtime % other.rawtime
         elif isinstance(other, (int, float)):
             return self.rawtime % other
-        return DatconError(False,[self,other],"unregistered operation","Maths_Support",True)
+        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, None, [self, other], ["Maths_Support", "__mod__"], True)
 
     def __pow__(self, other):
+        """
+        Raise rawtime to a given power (scalar or another rawtime).
+        Returns a new datetime object.
+        """
         if isinstance(other, Maths_Support):
             return datetime.operand(self.rawtime ** other.rawtime)
         elif isinstance(other, (int, float)):
             return datetime.operand(self.rawtime ** other)
-        return DatconError(False,[self,other],"unregistered operation","Maths_Support",True)
+        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, None, [self, other], ["Maths_Support", "__pow__"], True)
+
+    # Comparison operations return boolean values
 
     def __eq__(self, other):
+        """Check equality between this instance and another rawtime or scalar."""
         if isinstance(other, Maths_Support):
             return self.rawtime == other.rawtime
         elif isinstance(other, (int, float)):
             return self.rawtime == other
-        return DatconError(False,[self,other],"unregistered operation","Maths_Support",True)
+        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, None, [self, other], ["Maths_Support", "__eq__"], True)
 
     def __gt__(self, other):
+        """Greater-than comparison."""
         if isinstance(other, Maths_Support):
             return self.rawtime > other.rawtime
         elif isinstance(other, (int, float)):
             return self.rawtime > other
-        return DatconError(False,[self,other],"unregistered operation","Maths_Support",True)
+        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, None, [self, other], ["Maths_Support", "__gt__"], True)
 
     def __ge__(self, other):
+        """Greater-than-or-equal-to comparison."""
         if isinstance(other, Maths_Support):
             return self.rawtime >= other.rawtime
         elif isinstance(other, (int, float)):
             return self.rawtime >= other
-        return DatconError(False,[self,other],"unregistered operation","Maths_Support",True)
+        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, None, [self, other], ["Maths_Support", "__ge__"], True)
 
     def __lt__(self, other):
+        """Less-than comparison."""
         if isinstance(other, Maths_Support):
             return self.rawtime < other.rawtime
         elif isinstance(other, (int, float)):
             return self.rawtime < other
-        return DatconError(False,[self,other],"unregistered operation","Maths_Support",True)
+        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, None, [self, other], ["Maths_Support", "__lt__"], True)
 
     def __le__(self, other):
+        """Less-than-or-equal-to comparison."""
         if isinstance(other, Maths_Support):
             return self.rawtime <= other.rawtime
         elif isinstance(other, (int, float)):
             return self.rawtime <= other
-        return DatconError(False,[self,other],"unregistered operation","Maths_Support",True)
+        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, None, [self, other], ["Maths_Support", "__le__"], True)
 
     def __ne__(self, other):
+        """Check inequality between this instance and another."""
         if isinstance(other, Maths_Support):
             return self.rawtime != other.rawtime
         elif isinstance(other, (int, float)):
             return self.rawtime != other
-        return DatconError(False,[self,other],"unregistered operation","Maths_Support",True)
+        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, None, [self, other], ["Maths_Support", "__ne__"], True)
 
     def __repr__(self):
-        return DatconError(False,[self.rawtime],"unregistered operation","Maths_Support",True)
-class datetime(Maths_Support,Datetime_support):
-    """
-    Datcon: A Python library for datetime manipulation and math operations.
-    This library allows you to create, manipulate, and perform mathematical operations on datetime objects.
-    It supports various formats and provides a simple interface for datetime operations.
-    It is designed to be easy to use and flexible, making it suitable for a wide range of applications.     
-    
-    📘 datetime Help Manual 📘
-    ===========================
+        """
+        Prevent accidental use of __repr__ unless implemented explicitly.
+        Triggers a DatconError to force conscious developer decisions.
+        """
+        other = None
+        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, None, [self, other], ["Maths_Support", "__repr__"], True)
 
-    🧱 Initialization
-    -----------------
-    datetime()
-        Creates an empty datetime object. This is the root of all datetime operations.
+class datetime:
 
-    🕰️ Time & Date Extraction
-    --------------------------
-    These instance methods extract parts of the datetime object and update the `output` accordingly.
-
-    .date()
-        📅 Returns (year, month, day)
-
-    .time()
-        ⏰ Returns (hour, minute, second)
-
-    .year()
-        🗓️ Returns year only
-
-    .month()
-        🌙 Returns month only
-
-    .day()
-        📆 Returns day only
-
-    .hour()
-        🕐 Returns hour only
-
-    .minute()
-        🕑 Returns minute only
-
-    .second()
-        ⏱️ Returns second only
-
-    🧮 Math & Offsets
-    -----------------
-    .Offset()
-        🔄 Resets the current datetime object to zero (clears everything)
-
-    Math Operations:
-        The datetime class supports arithmetic and comparisons:
-            a + b       -> Add two datetime rawtimes
-            a - b       -> Subtract one datetime from another
-            a * 2       -> Multiply rawtime by a number
-            a == b      -> Compare if two datetimes are equal
-            a < b, >, <=, >=   -> All standard comparisons work
-
-    🧩 Datetime Creation
-    --------------------
-    These class methods create datetime objects from different kinds of input.
-
-    strptime(value: str, template: str)
-        🧵 Parses a formatted string into a datetime object
-        Example:
-            dt.strptime("2024-12-31 23:59:59", "%Y-%m-%d %H:%M:%S")
-
-    intptime(value: list[int], template: str)
-        🧮 Parses a list of integers into a datetime object using a format string
-        Example:
-            dt.intptime([2024, 12, 31, 23, 59, 59], "%Y%m%dHMS")
-
-    operand(rawtime: float)
-        🔢 Converts a rawtime float (internal representation) into a full datetime object
-        Useful for datetime math:
-            dt.operand(dt1.rawtime + dt2.rawtime)
-
-    📤 Output / Display
-    -------------------
-    str(obj)
-        🖨️ Converts the current output of the datetime object into a readable string
-        Output depends on last method used:
-            - (2024-12-31 23:59:59)
-            - (2024)
-            - (12)
-            - (23:59:59)
-
-    📜Final Notes:
-    -------------------
-
-    to open help write in the terminal one of the following options:
-        -Python3 datcon.py -h 
-        -Python3 datcon.py --help
-
-    """
-    def __init__(self):    
+    ANCHOR_RAWTIME = 0
+    def __init__(self):
         self.time_units = {
-            "Y": 31536000,    
+            "Y": 31536000,
             "m": {
-            1: 2678400,
-            2: 2419200,
-            3: 2678400,
-            4: 2592000,
-            5: 2678400,
-            6: 2592000,
-            7: 2678400,
-            8: 2678400,
-            9: 2592000,
-            10: 2678400,
-            11: 2592000,
-            12: 2678400},   
-            "d": 86400,      
-            "h": 3600,      
-            "M": 60,          
-            "s": 1,                  
+                1: 2678400, 2: 2419200, 3: 2678400, 4: 2592000,
+                5: 2678400, 6: 2592000, 7: 2678400, 8: 2678400,
+                9: 2592000, 10: 2678400, 11: 2592000, 12: 2678400},
+            "d": 86400,
+            "h": 3600,
+            "i": 60,
+            "s": 1,
         }
-
-        self.rawtime = float(0)
-        self.template = ['Y', 'm', 'd', 'h', 'M', 's']
-        self.leap=False
-        self.all_leap_days=int(0)
+        self.rawtime = 0.0
+        self.template = ['Y', 'm', 'd', 'h', 'i', 's']
         self.output = False
-        self.charge = "+"
+        self.epoch_type = AC
+
     def __str__(self):
+        data, source = self.output
+        Y, M, D, h, i, s = data
+        sec = int(s) if float(s).is_integer() else s
 
-        source = self.output[0]
-        data = self.output[1]
-        year = int(data[0])
-        month = int(data[1])
-        day = int(data[2])
-        hour = int(data[3])
-        minute = int(data[4])
-        second = float(data[5])
+        # Determine suffix and adjusted values based on calendar mode and rawtime
+        suffix = ""
+        display_Y = Y
 
-        if self.charge == "-":
-            orion = "B.C"
-        else:
-            orion = "A.C"
+        if self.epoch_type == AC:
+            suffix = "A.C"
+        elif self.epoch_type == BC:
+            suffix = "B.C"
 
-        if math.floor(second) == second:
-            decimal = int
-        else:
-            decimal = float
 
+        # Format string based on source type
         if source == "fulldatetime":
-            return f"({int(year):04}-{int(month):02}-{int(day):02} {int(hour):02}:{int(minute):02}:{decimal(second):02}) {orion}"
-
+            return f"({display_Y:04}-{M:02}-{D:02} {h:02}:{i:02}:{sec:02}) {suffix}"
         elif source == "date":
-            return f"({int(year):04}-{int(month):02}-{int(day):02}) {orion}"
+            return f"({display_Y:04}-{M:02}-{D:02}) {suffix}"
         elif source == "time":
-            return f"({int(hour):02}:{int(minute):02}:{decimal(second):02}) {orion}"
+            return f"({h:02}:{i:02}:{sec:02}) {suffix}"
         elif source == "year":
-            return f"({int(year):04}) {orion}"
+            return f"({display_Y:04}) {suffix}"
         elif source == "month":
-            return f"({int(month):02}) {orion}"
+            return f"({M:02}) {suffix}"
         elif source == "day":
-            return f"({int(day):02}) {orion}"
+            return f"({D:02}) {suffix}"
         elif source == "hour":
-            return f"({int(hour):02}) {orion}"
+            return f"({h:02}) {suffix}"
         elif source == "minute":
-            return f"({int(minute):02}) {orion}"
+            return f"({i:02}) {suffix}"
         elif source == "second":
-            return f"({decimal(second):02}) {orion}"
+            return f"({sec:02}) {suffix}"
         else:
             return "No source Found"
+
+
+
     @classmethod
-    def strptime(cls, value: str, template: str):
-        """
-        requires a value:str and a template:str\n
-        generates a datetime object out of thoes\n
-        """
+    def stamp(cls, value, template: str, epoch_type: str = AC, anchor_date=0):
+        cls.ANCHOR_RAWTIME = Calendar_converter(anchor_date)
         self = cls()
+        self.epoch_type = epoch_type
 
-        #before or after Christ
-        if value[0] == "-" or value[0] == "+":
-            self.charge = value[0]
-            value = value[1:]
-        else:
-            self.charge = "+"
-
-        if not isinstance(value, str):
-            DatconError(template, value, "uncorrect value", "strptime", True)
-
-        stemplate = []
-        corrector = {"y":"Y","D":"d","H":"h","S":"s"}
-
-
-        
-        for item in template:
-            if item not in  ["%","f"]:
-                if item in corrector:
-                    if corrector[item] not in stemplate:
-                        stemplate.append(corrector[item])
-                elif item in ["Y","d","h","s","m","M"]:
-                    if item not in stemplate:
-                        stemplate.append(item)
-
-        svalue = []
-        exec1 = ""
-        for item in value:
-
-            if item in ["1","2","3","4","5","6","7","8","9","0","."]:     #normal number adding
-                exec1+=item
-
-            else:       #well, number break I guess?
-                try:
-                    svalue.append(float(exec1))
-                    exec1 = ""
-
-                except ValueError:
-                    try:
-                        if "." in exec1:
-                            exec1.replace(".","") 
-                            svalue.append(float(exec1[0]))
-                            svalue.append(float(exec1[1]))
-                        else:
-                            svalue.append(float(exec1))
-                    except ValueError:
-                        exec1 = ""
-        
-        if exec1 and len(svalue) <len(stemplate):     
-            svalue.append(float(exec1))
-
-        if len(stemplate) > len(svalue):
-            DatconError(stemplate,svalue,"duplicated parameters","strptime",True)
-        elif len(stemplate) < len(svalue):
-            DatconError(stemplate,svalue,"too many values","strptime",True)
-        answer = []
-        j = 0
-
-        for i in range(len(self.template)):
-
-            if self.template[i] == stemplate[j]:
-                
-                answer.append(svalue[j])
-                # advance to the next token if there are any left
-                if j < len(stemplate) - 1:
-                    j += 1
-            else:
-                answer.append(0)
-
-
-        exact_datetime = answer
-
-
-        support = self.Backend(exact_datetime,"from_rawtimeget_leapyears")
-        
-        result = support[0]
-        self.leap = support[1]
-        self.all_leap_days = support[2]
-
-        rawtime = float(0)
-
-        idx_day   = self.template.index("d")
-        idx_month = self.template.index("m")
-        idx_year  = self.template.index("Y")
-        result[idx_day]   +=1
-        result[idx_month] +=1
-        result[idx_year]  +=1
-
-        if self.leap:
-            self.time_units["m"][2] = 2505600
-        
-
-        for i in range(len(self.template)):
-            unit = self.template[i]
-            value = result[i]
-            if unit == "m":
-                for m in range(1, int(value)):
-                    rawtime += self.time_units["m"][m]
-            elif unit == "d":
-                rawtime += (value - 1) * self.time_units["d"]
-            elif isinstance(self.time_units[unit], dict):
-                for k in range(1, value + 1):
-                    rawtime += self.time_units[unit][k]
-            else:
-                rawtime += value * self.time_units[unit]
-        if self.leap:
-            self.time_units["m"][2] = 2419200
-
- 
- 
-
-        self.rawtime = rawtime
-        rawtime_without_leaps = rawtime - self.all_leap_days * self.time_units["d"]
-        support = self.Backend(rawtime_without_leaps,"from_rawtime_to_datetime",self.leap)
-        self.output = ["fulldatetime",support]
-        if self.charge == "-":
-            self.rawtime = -self.rawtime
-        return self
-    @classmethod
-    def intptime(cls,value:list[int],template:str):
-        """
-        requires a value:list[int] and a template:str\n
-
-        generates a datetime object out of thoes\n
-        in case of error: check whether the value was introduced inside of a list\n
-
-        """
-        self = cls()
-        if  value[0] == "-":
-            self.charge = value[0]
-            value = value[1:]
-        elif value[0] == "+":
-            self.charge = value[0]
-            value = value[1:]
-        else:
-            self.charge = "+"
-
-        for item in value:
-            if not isinstance(item, (int,float)):
-                DatconError(template,value,"uncorrect input value","intptime",True)
-            
-        if "f" in template:
-            template = DatconError(template,value, "f in template","intptime",False)
-
-
-        
+        corrector = {"y": "Y", "D": "d", "H": "h", "S": "s"}
         parameters = []
-        for item in template:
-            if item in self.time_units:
-                parameters.append(item)
 
+        # If the value is a string → strptime branch
+        if isinstance(value, str):
+            NUMS = set("0123456789.")
+            for ch in template:
+                if ch not in ("%", "f"):
+                    u = corrector.get(ch, ch)
+                    if u in self.time_units and u not in parameters:
+                        parameters.append(u)
 
-        if len(parameters) > len(value):
-            DatconError(template,value,"duplicated parameters","intptime",True)
-        elif len(parameters) < len(value):
-            DatconError(template,value,"too many values","intptime",True)
-        answer = []
-        j = 0
-        for i in range(0,len(self.template)):
-            if self.template[i] == parameters[j]:
-                
-                answer.append(value[j])
-                if len(parameters)>j:
-                    j+=1
-            else:
-                answer.append(0)
-
-        exact_datetime = answer   
-
-        support = self.Backend(exact_datetime,"from_rawtimeget_leapyears")
-
-        result = support[0]
-        self.leap = support[1]
-        self.all_leap_days = support[2]
-
-        rawtime = float(0)
-
-        idx_day   = self.template.index("d")
-        idx_month = self.template.index("m")
-        idx_year  = self.template.index("Y")
-        result[idx_day]   +=1
-        result[idx_month] +=1
-        result[idx_year]  +=1
-
-        if self.leap:
-            self.time_units["m"][2] = 2505600
-        for i in range(len(self.template)):
-            unit = self.template[i]
-            value = result[i]
-            if unit == "m":
-                for m in range(1, value):
-                    rawtime += self.time_units["m"][m]
-            elif unit == "d":
-                rawtime += (value - 1) * self.time_units["d"]
-            elif isinstance(self.time_units[unit], dict):
-                for k in range(1, value + 1):
-                    rawtime += self.time_units[unit][k]
-            else:
-                rawtime += value * self.time_units[unit]
-        rawtime_without_leaps = rawtime - self.all_leap_days*self.time_units["d"]
-
-        self.rawtime = rawtime
-        if self.leap:
-            self.time_units["m"][2] = 2419200
-        support = self.Backend(rawtime_without_leaps,"from_rawtime_to_datetime",self.leap)
-        self.output = ["fulldatetime",support]
-        if self.charge == "-":
-            self.rawtime = -self.rawtime
-        return self
-    @classmethod
-    def operand(cls, rawtime):
-        """
-        "operand(rawtime: float) ->\n
-        datetime: Converts a raw-seconds value (with leap-days normalized out) back into a full datetime,\n
-        correctly handling Feb 29 on leap years. Returns a new datetime instance with its\n
-        output set to [‘fulldatetime’, [Y, M, D, h, m, s]]."
-
-        """
-        self = cls()
-        _, self.leap, self.all_leap_days = cls.Backend(rawtime, "find_leapvalue_in_rawtime")
-
-        if f"{rawtime}"[0] == "-":
-            self.charge = f"{rawtime}"[0]
-            rawtime = abs(rawtime)
-        else:
-            self.charge = "+"
-
-        raw_no_leaps = rawtime - self.all_leap_days * self.time_units["d"]
-        final_parts  = cls.Backend(raw_no_leaps,"from_rawtime_to_datetime",self.leap)
-
-        self.output  = ["fulldatetime", final_parts]
-        self.rawtime = rawtime
-        return self
-    @classmethod
-    def datetime(cls, value:list):
-        """
-        Generates a datetime object from a list or tuple of numbers.\n
-        The interpretation starts from the biggest unit (e.g., year, month...)
-        
-        """
-        
-        self = cls()
-        template = self.template
-        if value[0] == "-":
-            self.charge = value[0]
-            value = value[1:]
-        elif value[0] == "+":
-            self.charge = value[0]
-            value = value[1:]
-        else:
-            self.charge = "+"
-        
-        for item in value:
-            if not isinstance(item, (int,float)):
-                DatconError(template,value,"uncorrect input value","datetime",True)
-        if len(value)>len(template):
-            DatconError(template,value,"too many values","datetime.datetime",True)
-        
-        support = []
-        for i in range(len(template)):
-            try:
-                support.append(value[i])
-            except IndexError:
-                support.append(0)
-
-        support=self.Backend(support,"from_rawtimeget_leapyears")
-
-        self.all_leap_days=support[2]
-        self.leap=support[1]
-        rawtime = float(0)
-        result = support[0]
-        
-        idx_day   = self.template.index("d")
-        idx_month = self.template.index("m")
-        idx_year  = self.template.index("Y")
-        result[idx_day]   +=1
-        result[idx_month] +=1
-        result[idx_year]  +=1
-        if self.leap:
-            self.time_units["m"][2] = 2505600 
-
-        for i in range(len(self.template)):
-            unit = self.template[i]
-            value = result[i]
-            if unit == "m":
-                for m in range(1, value):
-                    rawtime += self.time_units["m"][m]
-            elif unit == "d":
-                rawtime += (value - 1) * self.time_units["d"]
-            elif isinstance(self.time_units[unit], dict):
-                for k in range(1, value + 1):
-                    rawtime += self.time_units[unit][k]
-            else:
-                rawtime += value * self.time_units[unit]
-        if self.leap:
-            self.time_units["m"][2] = 2419200 
-        self.rawtime = rawtime
-        rawtime_without_leaps = rawtime - self.all_leap_days * self.time_units["d"]
-        support = self.Backend(rawtime_without_leaps,"from_rawtime_to_datetime",self.leap)
-        self.output = ["fulldatetime",support]
-        if self.charge == "-":
-            self.rawtime = -self.rawtime
-        return self
-    @classmethod
-    def timedate(cls, value: list):
-        """
-        Generates a datetime object from a list or tuple of numbers.\n
-        The interpretation starts from the smallest unit (e.g., seconds, minutes...)
-        """
-        
-        self = cls()
-
-        if value[0] == "-":
-            self.charge = value[0]
-            value = value[1:]
-        elif value[0] == "+":
-            self.charge = value[0]
-            value = value[1:]
-        else:
-            self.charge = "+"
-        
-        for item in value:
-            if not isinstance(item, (int,float)):
-                DatconError(False,value,"uncorrect input value","timedate",True)
-        # Reversess the template 
-        template = list(reversed(self.template))
-
-        if len(value) > len(template):
-            DatconError(template, value, "too many values", "datetime.datetime", True)
-
-
-        support = []
-        for i in range(len(template)):
-            try:
-                support.append(value[i])
-            except IndexError:
-                support.append(0)
-
-        # Reverse support 
-        support = list(reversed(support))
-
-        support = self.Backend(support, "from_rawtimeget_leapyears")
-
-        self.all_leap_days = support[2]
-        self.leap = support[1]
-        rawtime = float(0)
-        result = support[0]
-
-        idx_day   = self.template.index("d")
-        idx_month = self.template.index("m")
-        idx_year  = self.template.index("Y")
-        result[idx_day]   +=1
-        result[idx_month] +=1
-        result[idx_year]  +=1
-        
-        if self.leap:
-            self.time_units["m"][2] = 2505600
-        for i in range(len(self.template)):
-            unit = self.template[i]
-            value = result[i]
-            if unit == "m":
-                for m in range(1, value):
-                    rawtime += self.time_units["m"][m]
-            elif unit == "d":
-                rawtime += (value - 1) * self.time_units["d"]
-            elif isinstance(self.time_units[unit], dict):
-                for k in range(1, value + 1):
-                    rawtime += self.time_units[unit][k]
-            else:
-                rawtime += value * self.time_units[unit]
-        if self.leap:
-            self.time_units["m"][2] = 2419200
-
-        self.rawtime = rawtime
-        rawtime_without_leaps = rawtime - self.all_leap_days * self.time_units["d"]
-        support = self.Backend(rawtime_without_leaps, "from_rawtime_to_datetime", self.leap)
-        self.output = ["fulldatetime", support]
-        if self.charge == "-":
-            self.rawtime = -self.rawtime
-        return self   
-    @classmethod
-    def Backend(cls,value,task:str,leap:bool = None):
-        """
-        programs are run in the back end with the objective to \n
-        not take up speace and be easily replicated across methods
-        """
-        self = cls()
-        if task =="from_rawtimeget_leapyears":
-            year = value[0]
-            month = value[1]
-            day = value[2]
-
-            hour = value[3]
-            minute = value[4]
-            second = value[5]
-            while second >= 60:
-                second -= 60
-                minute += 1
-            while minute >= 60:
-                minute -= 60
-                hour += 1
-            while hour >= 24:
-                hour -= 24
-                day += 1
-
-            if month in [1, 3, 5, 7, 8, 10, 12]:
-                # Months with 31 days
-                while day > 31:
-                    day -= 31
-                    month += 1
-            elif month in [4, 6, 9, 11]:
-                while day > 30:
-                    day -= 30
-                    month += 1
-            elif month == 2:
-                if self.leap:
-                    while day > 29:
-                        day -= 29
-                        month += 1
+            vals = []
+            buf = ""
+            for ch in value:
+                if ch in NUMS:
+                    buf += ch
                 else:
-                    while day > 28:
-                        day -= 28
-                        month += 1
-            while month>12:
-                month-=12
-                year+=1
-            
+                    if buf:
+                        vals.append(float(buf))
+                        buf = ""
+            if buf:
+                vals.append(float(buf))
 
+            if len(vals) != len(parameters):
+                err = (
+                    DatconErrorType.TOO_MANY_PARAMETERS
+                    if len(vals) < len(parameters)
+                    else DatconErrorType.TOO_MANY_VALUES
+                )
+                raise DatconError(err, "stamp", template, vals, self.ANCHOR_RAWTIME, True)
 
+            return self.finalize_full_datetime(vals, parameters, self.epoch_type, "fulldatetime")
 
-            extra = 0
-            self.leap = False
-            if year % 4 == 0:
-                    if year % 100 == 0:
-                        if year % 400 == 0:
-                            self.leap = True
-                    else:
-                        self.leap=True
+        # If the value is a list/tuple of ints/floats → intptime branch
+        elif isinstance(value, (list, tuple)) and all(isinstance(item, (int, float)) for item in value):
+            for ch in template:
+                u = corrector.get(ch, ch)
+                if u in cls().time_units and u not in parameters:
+                    parameters.append(u)
 
-            for time in range(1, int(year) + 1):
+            if len(value) != len(parameters):
+                err = (
+                    DatconErrorType.TOO_MANY_PARAMETERS
+                    if len(value) < len(parameters)
+                    else DatconErrorType.TOO_MANY_VALUES
+                )
+                raise DatconError(err, "stamp", template, value, self.ANCHOR_RAWTIME, True)
 
-                if time % 4 == 0:
-                    if time % 100 == 0:
-                        if time % 400 == 0:
-                            extra += 1 
-
-                    else:
-                        extra += 1  
-                        
-            
-
-                
-            self.all_leap_days=extra
-
-            return [[year,month,day+extra,hour,minute,second,],self.leap,extra] 
-        if task == "from_rawtime_to_datetime":
-            if leap:
-                self.time_units["m"][2] = 2505600 
-            rawtime = value 
-
-            year = int(math.floor(rawtime / self.time_units["Y"])) 
-            rawtime = rawtime % self.time_units["Y"]
-            month = 1
-            while month < 13 and rawtime >= self.time_units["m"][month]:
-                rawtime -= self.time_units["m"][month]
-                month += 1
-            month = min(month, 12)
-            
-            day = 1
-            while rawtime >= self.time_units["d"]:
-                rawtime -= self.time_units["d"]
-                day += 1
-            
-            hour = 0
-            while rawtime >= self.time_units["h"]:
-                hour += 1
-                rawtime -= self.time_units["h"]
-
-            minute = 0
-            while rawtime >= self.time_units["M"]:
-                minute += 1
-                rawtime -= self.time_units["M"]
-
-            
-            second = round(rawtime,4)
-            if self.leap:
-                self.time_units["m"][2] = 2419200
-            return [year,month,day,hour,minute,second]
-        elif task == "find_leapvalue_in_rawtime":
-
-            year_guess = int(math.floor(value / cls().time_units["Y"]))
-            year = max(year_guess, 1)
-            leap_flag = (year % 4 == 0 and (year % 100 != 0 or year % 400 == 0))
-            all_leaps = 0
-            for t in range(1, year):
-                if t%4==0 and (t%100!=0 or t%400==0):
-                    all_leaps += 1
-            raw_no_leaps = value - all_leaps * cls().time_units["d"]
-
-
-            date_parts = cls.Backend(raw_no_leaps, "from_rawtime_to_datetime", leap_flag)
-
-            support    = cls.Backend(date_parts, "from_rawtimeget_leapyears")
-            all_leaps  = support[2]
-            leap = support[1]
-
-            return [date_parts, leap, all_leaps]
-
+            return self.finalize_full_datetime(value, parameters, self.epoch_type)
 
         else:
-            raise ValueError("Unknown task")
-def DatconError(template:False,value:False,type,pleace:False,critical:False):
+            raise DatconError([
+                DatconErrorType.UNCORRECT_INPUT_VALUE,
+                template, value,
+                ["stamp", "unsupported_type"],
+                True
+            ])
+
+    @classmethod
+    def strptime(cls, input_value: str, template: str, epoch_type: str = AC, anchor_date: "datetime" = 0):
+        """
+        Parse a string according to `template` (e.g. "YmdHis") into a datetime.
+        """
+
+        cls.ANCHOR_RAWTIME = Calendar_converter(anchor_date )
+        
+        
+        self = cls()
+        self.epoch_type = epoch_type
+
+        if not isinstance(input_value, str):
+            raise DatconError([
+                DatconErrorType.UNCORRECT_INPUT_VALUE,
+                template, input_value,
+                ["strptime", "input_value_wasnt_str"],
+                True
+            ])
+
+        # Build the list of units to extract
+        parameters = []
+        corrector = {"y": "Y", "D": "d", "H": "h", "S": "s"}
+        for ch in template:
+            if ch not in ("%", "f"):
+                u = corrector.get(ch, ch)
+                if u in self.time_units and u not in parameters:
+                    parameters.append(u)
+
+        # Extract numeric substrings
+        NUMS = set("0123456789.")
+        vals = []
+        buf = ""
+        for ch in input_value:
+            if ch in NUMS:
+                buf += ch
+            else:
+                if buf:
+                    vals.append(float(buf))
+                    buf = ""
+        if buf:
+            vals.append(float(buf))
+        
+        # Ensure counts match
+        if len(vals) != len(parameters):
+            err = (
+                DatconErrorType.TOO_MANY_PARAMETERS
+                if len(vals) < len(parameters)
+                else DatconErrorType.TOO_MANY_VALUES
+            )
+            raise DatconError(err,"strptime",template,vals,self.ANCHOR_RAWTIME,True)
+
+        # Finalize and return
+        return self.finalize_full_datetime(vals, parameters, self.epoch_type, "fulldatetime", )
+    @classmethod
+    def intptime(cls, value: list[int], template: str, epoch_type: str = AC, anchor_date=0):
+        self = cls()
+        cls.ANCHOR_RAWTIME = Calendar_converter(anchor_date)
+        self.epoch_type = epoch_type
+
+        # 1) Validate that every item in value is numeric
+        for item in value:
+            if not isinstance(item, (int, float)):
+                err = DatconErrorType.UNCORRECT_INPUT_VALUE
+                raise DatconError(err,"intptime",template,value,self.ANCHOR_RAWTIME,True)
+
+        # 2) Build the list of expected parameters using the same corrector logic as strptime
+        corrector = {"y": "Y", "D": "d", "H": "h", "S": "s"}
+        parameters = []
+        for ch in template:
+            u = corrector.get(ch, ch)
+            if u in cls().time_units and u not in parameters:
+                parameters.append(u)
+
+        # 3) Now ensure the counts match
+        if len(value) != len(parameters):
+            err = (
+                DatconErrorType.TOO_MANY_PARAMETERS
+                if len(value) < len(parameters)
+                else DatconErrorType.TOO_MANY_VALUES
+            )
+            raise DatconError(err, "intptime",template,value,self.ANCHOR_RAWTIME,True)
+
+        # 4) Finally, hand off to your normal finalizer
+        return self.finalize_full_datetime(value, parameters, self.epoch_type)
+    @classmethod
+    def operand(cls,offset_seconds: float,reverse: bool = False,anchor_date=0):
+
+        """
+        Treat `offset_seconds` as seconds *after* year‑0, then subtract
+        the anchor’s rawtime so that `rawtime = anchor – offset_seconds`.
+        If `reverse=True`, flips the sign of `offset_seconds` first.
+        """
+        # 1) Convert anchor_date → raw seconds base
+        base = Calendar_converter(anchor_date)
+
+        # 2) Apply reverse flag to offset if needed
+        if reverse:
+            offset_seconds = -offset_seconds
+
+        # 3) Compute the “true” rawtime = anchor – offset
+        absolute = base - offset_seconds
+
+        # 4) Decide era and magnitude for display
+        if absolute < 0:
+            era = BC
+            secs = -absolute
+        else:
+            era = AC
+            secs = absolute
+
+        # 5) For printing, set ANCHOR_RAWTIME = base so convert_rawtime_to_date
+        #    adds the anchor back; then restore the old anchor.
+        old_anchor = cls.ANCHOR_RAWTIME
+        cls.ANCHOR_RAWTIME = base
+        parts = convert_rawtime_to_date(secs)
+        cls.ANCHOR_RAWTIME = old_anchor
+
+        # 6) Build and return the datetime instance
+        inst = cls()
+        inst.epoch_type = era
+        inst.rawtime    = absolute
+        inst.output     = [parts, "fulldatetime"]
+        return inst
+    @classmethod
+    def datetime(cls, value: list[int], epoch_type: str = AC, anchor_date=0):
+        self = cls()
+        cls.ANCHOR_RAWTIME = Calendar_converter(anchor_date)
+        self.epoch_type = epoch_type
+        return self.finalize_full_datetime(value, self.template, self.epoch_type)
+    @classmethod
+    def timedate(cls, value: list, epoch_type: str = AC, anchor_date=0):
+        self = cls()
+        cls.ANCHOR_RAWTIME = Calendar_converter(anchor_date)
+        self.epoch_type = epoch_type
+        rev_tmpl = list(reversed(self.template))
+        return self.finalize_full_datetime(value, rev_tmpl, self.epoch_type)
+    @classmethod
+    def current_time(cls, anchor_date=0):
+        """
+        Returns the current real-world UTC time as [Y, m, d, h, i, s],
+        without using the `datetime` module.
+        """
+        raw = time.gmtime()  # returns struct_time in UTC
+        now = [raw.tm_year, raw.tm_mon, raw.tm_mday, raw.tm_hour, raw.tm_min, raw.tm_sec]
+        return datetime.datetime(now,AC, anchor_date)
+    def finalize_full_datetime(self, value, parameters: str, epoch_type: str, output_type="fulldatetime"):
+        self.epoch_type = epoch_type
+
+        template_lower = [key.lower() for key in self.template]
+        parameters_lower = [param.lower() for param in parameters]
+        param_value_map = dict(zip(parameters_lower, value))
+
+        # Fill in defaults
+        full = []
+        for key in template_lower:
+            if key in param_value_map:
+                full.append(param_value_map[key])
+            else:
+                full.append(1 if key in ('m', 'd') else 0)
+
+        full = normalize_full(full)
+
+        # Convert to rawtime and apply anchor
+        total_raw = convert_input_to_rawtime(full, self.template)
+        if epoch_type == BC:
+            total_raw = -total_raw
+
+        self.rawtime = total_raw
+        parts = convert_rawtime_to_date(total_raw)
+        self.output = [parts, output_type]
+        return self     
+def convert_input_to_rawtime(value: list, parameters: list, hour_difference=0) -> float:
+    """Convert Y/m/d h:i:s into raw seconds and subtract anchor."""
     
-    if type == "uncorrect value":
-        print(f"Datcon: there was an error in {pleace} , the input value was uncorrect")
-    elif type == "duplicated parameters":
-        print(f"Datcon: There are duplicated parameters in your {pleace} function, pls check the template: {template}")
-    elif type == "uncorrect input value":
-        if pleace in [ "intptime","datetime","timedate"]:
-            support = "a list or a tuple, \n\tit must be composed of integers or floats \n\texcept the first element which can be a string - to indicate B.C"
-        elif pleace == "strptime":
-            support = "inside a string"
-        print(f"Datcon: the input value of {pleace} must always be {support}")
-    elif type == "f in template":
-        print("Datcon: in this version of Datcon,we have already removed the f,we politly request the usser to refrain from ussing it from now ")
-    elif type == "too many values":
-        print(f"Datcon:there where to many values in your {pleace} function, pls check the value {value}")
-    elif type == "unregistered operation":
-        print("we runned into an error when it came to executing complex operations with datetime objects")
-    if critical:
-        return exit()
+    def is_leap_year(y):
+        return (y % 4 == 0 and y % 100 != 0) or (y % 400 == 0)
 
-    if type == "f in template":
-        template.replace("f", "")
-        return template
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(datetime.__doc__)
-    args = parser.parse_args()
-    # Example usage
+    def days_since_epoch(Y, M, D):
+        mdays = [31,28,31,30,31,30,31,31,30,31,30,31]
+        days = 0
+        ref_year = 0
+        for y in range(ref_year, Y):
+            days += 366 if is_leap_year(y) else 365
+        for m in range(1, M):
+            days += 29 if (m == 2 and is_leap_year(Y)) else mdays[m-1]
+        return days + (D - 1)
 
+    vals = dict(zip(parameters, value))
+    Y = int(vals.get('Y', 0))
+    M = int(vals.get('m', 0))
+    D = int(vals.get('d', 0))
+    h = int(vals.get('h', 0))
+    i = int(vals.get('i', 0))
+    s = float(vals.get('s', 0))
 
-__all__ = ["datetime","Maths_Support","Datetime_support","DatconError"]
+    total = days_since_epoch(Y, M, D) * 86400 + h * 3600 + i * 60 + s + hour_difference * 3600
+
+    return float(total) - datetime.ANCHOR_RAWTIME
+def convert_rawtime_to_date(seconds: int | float) -> list:
+    """Convert rawtime into [Y, m, d, h, i, s], accounting for anchor."""
+
+    def is_leap_year(y):
+        return (y % 4 == 0 and y % 100 != 0) or (y % 400 == 0)
+
+    seconds += datetime.ANCHOR_RAWTIME
+    days = int(seconds // 86400)
+    rem = seconds % 86400
+    Y = 0
+
+    while True:
+        year_days = 366 if is_leap_year(Y) else 365
+        if days >= year_days:
+            days -= year_days
+            Y += 1
+        else:
+            break
+
+    mdays = [31,28,31,30,31,30,31,31,30,31,30,31]
+    M = 1
+    while True:
+        dim = 29 if (M == 2 and is_leap_year(Y)) else mdays[M - 1]
+        if days >= dim:
+            days -= dim
+            M += 1
+        else:
+            break
+
+    D = days + 1
+    h = int(rem // 3600)
+    rem %= 3600
+    i = int(rem // 60)
+    s = rem % 60
+
+    return [Y, M, D, h, i, float(s)]
+def normalize_full(full: list[int]) -> list[int]:
+    """
+    Normalize a full [Y, M, D, h, i, s] list:
+    - Carries overflow from seconds → minutes → hours → days
+    - Adjusts months > 12 or < 1
+    - Converts overlarge day values into correct month/year
+    - Handles leap years and month lengths
+    """
+
+    Y, M, D, h, i, s = full
+
+    # Carry seconds → minutes
+    i += s // 60
+    s = s % 60
+
+    # Carry minutes → hours
+    h += i // 60
+    i = i % 60
+
+    # Carry hours → days
+    D += h // 24
+    h = h % 24
+
+    # Normalize month (make sure 1 <= M <= 12)
+    if M < 1 or M > 12:
+        years_delta, M = divmod(M - 1, 12)
+        M += 1
+        Y += years_delta
+
+    # Helper: days in a given month
+    def days_in_month(year, month):
+        if month == 2:
+            # Leap year check
+            if (year % 4 == 0 and year % 100 != 0) or (year % 400 == 0):
+                return 29
+            return 28
+        return [31,28,31,30,31,30,31,31,30,31,30,31][int(month) - 1]
+
+    # Carry days → months (may loop multiple months)
+    while True:
+        dim = days_in_month(Y, M)
+        if D < 1:
+            # Borrow from previous month
+            M -= 1
+            if M < 1:
+                M = 12
+                Y -= 1
+            D += days_in_month(Y, M)
+        elif D > dim:
+            D -= dim
+            M += 1
+            if M > 12:
+                M = 1
+                Y += 1
+        else:
+            break
+
+    return [Y, M, D, h, i, s]
+def Calendar_converter(anchor: datetime | float | int = 0) -> float:
+    """
+    Convert a datetime instance, raw float seconds, or integer year into rawtime.
+    """
+    if isinstance(anchor, (int, float)):
+        return float(anchor)
+    elif isinstance(anchor, datetime):
+        return float(anchor.rawtime)
+    return 0.0
+
+__all__ = [
+    "DatconErrorType",
+    "DatconError",
+    "EpochType",
+    "AC",
+    "BC",
+    "Datetime_support",
+    "Maths_Support",
+    "datetime",
+    "convert_input_to_rawtime",
+    "convert_rawtime_to_date",
+    "normalize_full",
+    "Calendar_converter"
+]
