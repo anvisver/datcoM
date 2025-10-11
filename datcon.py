@@ -3,80 +3,85 @@ import time
 
 # Define possible error types for the custom datetime system
 class DatconErrorType(Enum):
-    UNCORRECT_VALUE        = auto()
+    """
+    contains the Error-types ussed in DatconError to handle issues in this datetime package\n
+    
+    INCORRECT_VALUE\n    
+    TOO_MANY_PARAMETERS\n    
+    TOO_MANY_VALUES\n  
+    UNREGISTERED_OPERATION\n
+    UNKNOWN\n             
+    INCORRECT_ANCHOR_VALUE\n 
+    
+    """
+
+    INCORRECT_VALUE        = auto()
     TOO_MANY_PARAMETERS    = auto()
-    UNCORRECT_INPUT_VALUE  = auto()
-    F_IN_TEMPLATE          = auto()
     TOO_MANY_VALUES        = auto()
     UNREGISTERED_OPERATION = auto()
     UNKNOWN                = auto()
-
+    INCORRECT_ANCHOR_VALUE = auto()
 
 class DatconError(Exception):
     """
-    Detailed exception for Datcon operations.
+    DatconError: enriched exception with actionable hints.
 
-    Attributes:
-        error_type   (DatconErrorType): kind of error
-        place        (str): name of the method or step
-        template     (Optional[str]): format template involved
-        value        (Any): the offending input or intermediate value
-        anchor_date  (Optional[float]): current ANCHOR_RAWTIME, if relevant
-        critical     (bool): whether this should abort execution
+    Constructor signature remains:
+        DatconError(error_type, place, template=None, value=None, anchor_date=None, critical=False)
+
+    - error_type: DatconErrorType enum
+    - place: str or list indicating function/module and subcomponent
+    - template: optional template string involved
+    - value: the offending value(s)
+    - anchor_date: optional anchor seconds (for anchor-related errors)
+    - critical: whether this is considered fatal
     """
-    __module__ = "builtins"
-    def __init__(self,
-                error_type: DatconErrorType,
-                place: str,
-                template: str = None,
-                value: object = None,
-                anchor_date: float = None,
-                critical: bool = False):
-        self.error_type  = error_type
-        self.place       = place
-        self.value       = value
-        self.template    = template
+    def __init__(self, error_type:str, place:str, template: str = None, value:list[int] | str =None, anchor_date: float | int =None, critical: bool = False):
+        self.error_type = error_type
+        self.place = place
+        self.template = template
+        self.value = value
         self.anchor_date = anchor_date
-        self.critical    = critical
-
-        # Build message components
-        parts = [f" [{place}] {error_type.name.replace('_',' ').title()}"]
-
-        if template is not None:
-            parts.append(f"Template: {template!r}")
-
-        if value is not None:
-            parts.append(f"Value: {value!r}")
-
-        if anchor_date is not None:
-            parts.append(f"Anchor rawtime: {anchor_date}")
-
-        # Add tailored hint
-        hint = self._suggest_fix()
-        if hint:
-            parts.append(f"Hint: {hint}\n")
-
-        msg = "\n" + " \n ".join(parts)
+        self.critical = bool(critical)
+        msg = self._build_message()
         super().__init__(msg)
 
-    def _suggest_fix(self) -> str:
-        # Provide specific hints for known cases
-        if self.place == "intptime":
-            if self.error_type is DatconErrorType.UNCORRECT_INPUT_VALUE:
-                return "Ensure you passed a list of 6 numbers [Y,m,d,h,i,s]."
-            if self.error_type in (DatconErrorType.TOO_MANY_VALUES,
-                                DatconErrorType.TOO_MANY_PARAMETERS):
-                return "Match the number of values to the template length."
-        if self.place == "strptime":
-            if self.error_type is DatconErrorType.UNCORRECT_INPUT_VALUE:
-                return "Pass a string matching your template."
-            if self.error_type in (DatconErrorType.TOO_MANY_VALUES,
-                                DatconErrorType.TOO_MANY_PARAMETERS):
-                return "Check that template tokens and digits in the string align."
-        return "No hints available"
+    def _build_message(self) -> str:
+        parts = []
+        parts.append(f"{self.error_type.name}: occurred in {self.place!r}")
+        if self.template is not None:
+            parts.append(f"Template: {self.template!r}")
+        if self.value is not None:
+            parts.append(f"Value: {self.value!r}")
+        if self.anchor_date is not None:
+            parts.append(f"Anchor (seconds): {self.anchor_date!r}")
+        parts.append(f"Critical: {self.critical}")
+        hint = self._suggest_fix()
+        if hint:
+            parts.append("Suggestion: " + hint)
+        return "\n".join(parts)
 
-    def __str__(self):
-        return self.args[0]
+    def _suggest_fix(self) -> str:
+        et = self.error_type
+        p = self.place
+        if et.name == 'INCORRECT_ANCHOR_VALUE':
+            return ("Anchor value is not recognised. Pass a float (raw seconds), a datetime-like object, "
+                    "or an integer year (e.g. 2000). If you passed a small int and intended seconds, use a float (7200.0).")
+        if et.name == 'INCORRECT_VALUE':
+            if isinstance(p, (list, tuple)) and len(p) >= 1 and p[0] == 'stamp':
+                return "Stamp input format mismatch. Ensure a list of 6 numbers [Y,m,d,h,i,s] or a matching template string."
+            return "Check the value(s) supplied to the function; types or ranges may be invalid."
+        if et.name == 'TOO_MANY_PARAMETERS' or et.name == 'TOO_MANY_VALUES':
+            return "Too many parameters/values for the given template. Make sure the number of tokens matches the number of values."
+        if et.name == 'UNREGISTERED_OPERATION':
+            return "Operation between provided operand types is not supported. Convert operands to compatible types or implement the operation."
+        if isinstance(p, str) and 'Calendar' in p:
+            return "Check anchor conversion code: Calendar_converter should return seconds to ADD (not apply class anchor twice)."
+        if isinstance(p, (list, tuple)) and 'int' in p:
+            return "Integer inputs may be ambiguous (year vs seconds). Prefer explicit types: use datetime objects or floats for seconds."
+        return None
+
+
 
 
 # Define possible calendar epochs
@@ -87,11 +92,12 @@ class EpochType(Enum):
     @property
     def epoch_offset(self) -> float:
         return 0.0
-
 # Export enum for easier external use
+
 AC = EpochType.AC
 BC = EpochType.BC
 
+CENTRAL_EUROPEAN_TIMELINE = float(7200)
 
 class Datetime_support:
     # --- Extract only part of the datetime and compute rawtime accordingly ---
@@ -102,7 +108,6 @@ class Datetime_support:
         self.output = [[0,1,1,h,i,s], "time"]
         secs = h*3600 + i*60 + s
         self.rawtime = secs + self.epoch_type.epoch_offset
-        print(self.output)
         return self
 
     def date(self):
@@ -199,7 +204,6 @@ class Datetime_support:
         pieces, _ = self.output
         self.output = [pieces, type_swap]
         return self
-
 class Maths_Support:
     """
     Maths_Support provides arithmetic and comparison operations based on rawtime,
@@ -220,7 +224,7 @@ class Maths_Support:
             return datetime.operand(self.rawtime + other.rawtime)
         elif isinstance(other, (int, float)):
             return datetime.operand(self.rawtime + other)
-        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, None, [self, other], ["Maths_Support", "__add__"], True)
+        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, ["Maths_Support", "__add__"],[self.template,other.template], [self.rawtime, other.rawtime],[self.template,other.template] , True)
 
     def __sub__(self, other):
         """
@@ -231,7 +235,8 @@ class Maths_Support:
             return datetime.operand(self.rawtime - other.rawtime)
         elif isinstance(other, (int, float)):
             return datetime.operand(self.rawtime - other)
-        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, None, [self, other], ["Maths_Support", "__sub__"], True)
+        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, ["Maths_Support", "__sub__"],[self.template,other.template], [self.rawtime, other.rawtime],[self.template,other.template] , True)
+
 
     def __mul__(self, other):
         """
@@ -243,7 +248,7 @@ class Maths_Support:
             return datetime.operand(self.rawtime * other.rawtime)
         elif isinstance(other, (int, float)):
             return datetime.operand(self.rawtime * other)
-        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, None, [self, other], ["Maths_Support", "__mul__"], True)
+        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, ["Maths_Support", "__mul__"],[self.template,other.template], [self.rawtime, other.rawtime],[self.template,other.template] , True)
 
     def __truediv__(self, other):
         """
@@ -254,7 +259,8 @@ class Maths_Support:
             return datetime.operand(self.rawtime / other.rawtime)
         elif isinstance(other, (int, float)):
             return datetime.operand(self.rawtime / other)
-        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, None, [self, other], ["Maths_Support", "__truediv__"], True)
+        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, ["Maths_Support", "__truediv__"],[self.template,other.template], [self.rawtime, other.rawtime],[self.template,other.template] , True)
+
 
     def __floordiv__(self, other):
         """
@@ -266,7 +272,8 @@ class Maths_Support:
             return datetime.operand(self.rawtime // other.rawtime)
         elif isinstance(other, (int, float)):
             return datetime.operand(self.rawtime // other)
-        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, None, [self, other], ["Maths_Support", "__floordiv__"], True)
+        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, ["Maths_Support", "__floordiv__"],[self.template,other.template], [self.rawtime, other.rawtime],[self.template,other.template] , True)
+
 
     def __mod__(self, other):
         """
@@ -278,7 +285,8 @@ class Maths_Support:
             return self.rawtime % other.rawtime
         elif isinstance(other, (int, float)):
             return self.rawtime % other
-        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, None, [self, other], ["Maths_Support", "__mod__"], True)
+        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, ["Maths_Support", "__mod__"],[self.template,other.template], [self.rawtime, other.rawtime],[self.template,other.template] , True)
+
 
     def __pow__(self, other):
         """
@@ -289,7 +297,8 @@ class Maths_Support:
             return datetime.operand(self.rawtime ** other.rawtime)
         elif isinstance(other, (int, float)):
             return datetime.operand(self.rawtime ** other)
-        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, None, [self, other], ["Maths_Support", "__pow__"], True)
+        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, ["Maths_Support", "__pow__"],[self.template,other.template], [self.rawtime, other.rawtime],[self.template,other.template] , True)
+
 
     # Comparison operations return boolean values
 
@@ -299,7 +308,7 @@ class Maths_Support:
             return self.rawtime == other.rawtime
         elif isinstance(other, (int, float)):
             return self.rawtime == other
-        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, None, [self, other], ["Maths_Support", "__eq__"], True)
+        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, ["Maths_Support", "__eq__"],[self.template,other.template], [self.rawtime, other.rawtime],[self.template,other.template] , True)
 
     def __gt__(self, other):
         """Greater-than comparison."""
@@ -307,7 +316,8 @@ class Maths_Support:
             return self.rawtime > other.rawtime
         elif isinstance(other, (int, float)):
             return self.rawtime > other
-        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, None, [self, other], ["Maths_Support", "__gt__"], True)
+        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, ["Maths_Support", "__gt__"],[self.template,other.template], [self.rawtime, other.rawtime],[self.template,other.template] , True)
+
 
     def __ge__(self, other):
         """Greater-than-or-equal-to comparison."""
@@ -315,7 +325,8 @@ class Maths_Support:
             return self.rawtime >= other.rawtime
         elif isinstance(other, (int, float)):
             return self.rawtime >= other
-        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, None, [self, other], ["Maths_Support", "__ge__"], True)
+        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, ["Maths_Support", "__ge__"],[self.template,other.template], [self.rawtime, other.rawtime],[self.template,other.template] , True)
+
 
     def __lt__(self, other):
         """Less-than comparison."""
@@ -323,7 +334,8 @@ class Maths_Support:
             return self.rawtime < other.rawtime
         elif isinstance(other, (int, float)):
             return self.rawtime < other
-        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, None, [self, other], ["Maths_Support", "__lt__"], True)
+        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, ["Maths_Support", "__lt__"],[self.template,other.template], [self.rawtime, other.rawtime],[self.template,other.template] , True)
+
 
     def __le__(self, other):
         """Less-than-or-equal-to comparison."""
@@ -331,7 +343,8 @@ class Maths_Support:
             return self.rawtime <= other.rawtime
         elif isinstance(other, (int, float)):
             return self.rawtime <= other
-        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, None, [self, other], ["Maths_Support", "__le__"], True)
+        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, ["Maths_Support", "__le__"],[self.template,other.template], [self.rawtime, other.rawtime],[self.template,other.template] , True)
+
 
     def __ne__(self, other):
         """Check inequality between this instance and another."""
@@ -339,7 +352,8 @@ class Maths_Support:
             return self.rawtime != other.rawtime
         elif isinstance(other, (int, float)):
             return self.rawtime != other
-        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, None, [self, other], ["Maths_Support", "__ne__"], True)
+        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, ["Maths_Support", "__ne__"],[self.template,other.template], [self.rawtime, other.rawtime],[self.template,other.template] , True)
+
 
     def __repr__(self):
         """
@@ -347,12 +361,142 @@ class Maths_Support:
         Triggers a DatconError to force conscious developer decisions.
         """
         other = None
-        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, None, [self, other], ["Maths_Support", "__repr__"], True)
+        raise DatconError(DatconErrorType.UNREGISTERED_OPERATION, ["Maths_Support", "__repr__"],[self.template,other.template], [self.rawtime, other.rawtime],[self.template,other.template] , True)
 
-class datetime:
+class datetime(Maths_Support,Datetime_support):
+    """
+    Welcome to the **Custom Datetime System**!
 
-    ANCHOR_RAWTIME = 0
-    def __init__(self):
+    This project is a complete, hand-crafted alternative to Python’s built-in `datetime` module. It provides full support for creating, manipulating, and displaying dates and times without depending on any external libraries. Instead of relying on complex built-in types, this system represents every moment as a single number called **`rawtime`**, which is the total number of seconds counted from a chosen starting point (the epoch). From this internal representation, all dates and times can be built, displayed, and calculated.
+
+    ---
+
+    ## How It Works
+    At its core, the system converts any date or time into `rawtime`. You can think of `rawtime` as a timeline measured only in seconds. Once a moment is stored in this format, the system can:
+    - Convert it back into years, months, days, hours, minutes, and seconds.
+    - Perform arithmetic (e.g., add or subtract seconds, days, years).
+    - Compare two dates to see which one is earlier or later.
+
+    ---
+
+    ## Main Components
+
+    ### 1. `datetime` (Main Class)
+    The `datetime` class is the centerpiece of the system. It provides a wide range of tools:
+    - **Creation**: Build datetime objects from strings, lists of numbers, or numeric values.
+    - **Display**: Show a datetime in a clean, human-readable format.
+    - **Arithmetic**: Add or subtract values like seconds, minutes, or days.
+    - **Comparison**: Check if one date is earlier or later than another.
+    - **Conversion**: Switch between human-readable parts and the internal `rawtime`.
+
+    Key functions include:
+    - `datetime.stamp()`: Create a datetime from a string, list, or template.
+    - `datetime.current_time()`: Get the current UTC time as a datetime.
+    - `datetime.operand()`: Build a datetime from an offset of seconds relative to an anchor.
+    - `datetime.show()`: Display the object as a formatted string.
+
+    ### 2. Support Classes
+    - **`Datetime_support`**: Provides functions to extract or focus on only the *date* (year, month, day) or only the *time* (hours, minutes, seconds).
+    - **`Maths_Support`**: Supplies arithmetic and comparison operators. With it, you can:
+    - Add numbers to a datetime (e.g., `dt + 86400` → one day later).
+    - Subtract one datetime from another.
+    - Compare datetimes with `<`, `>`, `==`, etc.
+
+    ### 3. Error Handling (`DatconError`)
+    Mistakes are explained with a custom exception called `DatconError`. Instead of a generic error, this system gives:
+    - A description of what went wrong.
+    - The type of error (such as `INCORRECT_VALUE` or `UNREGISTERED_OPERATION`).
+    - Helpful hints for fixing the mistake (like checking if the input format matches the template).
+
+    ### 4. Epoch Types
+    The system supports both **AC** (After Christ) and **BC** (Before Christ) eras. Dates can move forward or backward in time, and the system will adjust the internal `rawtime` value accordingly.
+
+    ---
+
+    ## Features in Detail
+
+    ### Creating Datetime Objects
+    You can create objects in several ways:
+    ```python
+    # From a string and a template
+    d = datetime.stamp("2025-09-19 12:34:56", template="%Y-%m-%d %H:%i:%s")
+
+    # From a list of numbers
+    d2 = datetime.stamp([2025, 9, 19, 12, 34, 56])
+
+    # From the current system time
+    now = datetime.current_time()
+    ```
+
+    ### Performing Arithmetic
+    Datetimes can be modified with standard math operations:
+    ```python
+    # Add one hour to a datetime
+    d_plus_hour = d + 3600
+
+    # Subtract two datetimes (gives a difference)
+    diff = d2 - d
+
+    # Multiply or divide rawtime values
+    d_scaled = d * 2
+    ```
+
+    ### Comparing Dates
+    You can compare datetime objects directly:
+    ```python
+    if d2 > d:
+        print("d2 comes after d")
+    ```
+
+    ### Displaying Results
+    Printing a datetime gives you a human-friendly representation:
+    ```python
+    print(d)   # (2025-09-19 12:34:56) A.C
+    print(now) # (2025-09-19 14:07:03) A.C (for example)
+    ```
+
+    ---
+
+    ## How the System Calculates Dates
+    - **Internal representation**: Everything is stored in seconds (`rawtime`).
+    - **Conversion to date parts**: A built-in function converts `rawtime` into year, month, day, hour, minute, and second.
+    - **Leap years**: The system correctly accounts for leap years when handling February.
+    - **Months**: Each month has its proper length (28–31 days).
+    - **Anchors**: An anchor defines the starting point for calculations. By default, a European timeline constant is used, but you can set your own.
+
+    ---
+
+    ## Example Workflow
+    ```python
+    # Step 1: Create a datetime from a string
+    d1 = datetime.stamp("2025-09-19 12:00:00", template="%Y-%m-%d %H:%i:%s")
+
+    # Step 2: Add some time
+    one_day_later = d1 + 86400  # add one day
+
+    # Step 3: Compare with another datetime
+    d2 = datetime.stamp([2025, 9, 20, 12, 0, 0])
+    print(d2 == one_day_later)  # True
+
+    # Step 4: Print results
+    print(d1)            # (2025-09-19 12:00:00) A.C
+    print(one_day_later) # (2025-09-20 12:00:00) A.C
+    ```
+
+    ---
+
+    ## Why Use This System?
+    - **Independence**: Works without Python’s built-in `datetime`.
+    - **Flexibility**: Accepts many input forms (strings, numbers, lists).
+    - **Clarity**: Outputs are simple and easy to read.
+    - **Control**: You can work directly with raw seconds if you want low-level precision.
+
+    ---
+
+    This system provides all the tools needed to manage time, from simple tasks like printing today’s date to advanced operations like handling eras, anchors, and detailed arithmetic. It is designed to be approachable for beginners but powerful enough for advanced use.
+    """
+    ANCHOR_RAWTIME:float = 0
+    def __init__(self) -> "datetime":
         self.time_units = {
             "Y": 31536000,
             "m": {
@@ -368,11 +512,10 @@ class datetime:
         self.template = ['Y', 'm', 'd', 'h', 'i', 's']
         self.output = False
         self.epoch_type = AC
-
-    def __str__(self):
+    def __str__(self) -> "datetime":
         data, source = self.output
         Y, M, D, h, i, s = data
-        sec = int(s) if float(s).is_integer() else s
+        sec = int(s) if float(s).is_integer() else float(s)
 
         # Determine suffix and adjusted values based on calendar mode and rawtime
         suffix = ""
@@ -405,11 +548,8 @@ class datetime:
             return f"({sec:02}) {suffix}"
         else:
             return "No source Found"
-
-
-
     @classmethod
-    def stamp(cls, value, template: str, epoch_type: str = AC, anchor_date=0):
+    def stamp(cls, value: list[int] | str = [0,1,1,0,0,0], template: list[str] | str = ['Y', 'm', 'd', 'h', 'i', 's'], epoch_type: EpochType = AC, anchor_date: float | int = 0) -> "datetime":
         cls.ANCHOR_RAWTIME = Calendar_converter(anchor_date)
         self = cls()
         self.epoch_type = epoch_type
@@ -444,7 +584,7 @@ class datetime:
                     if len(vals) < len(parameters)
                     else DatconErrorType.TOO_MANY_VALUES
                 )
-                raise DatconError(err, "stamp", template, vals, self.ANCHOR_RAWTIME, True)
+                raise DatconError(err, ["stamp", "str"], template, vals, self.ANCHOR_RAWTIME, True)
 
             return self.finalize_full_datetime(vals, parameters, self.epoch_type, "fulldatetime")
 
@@ -461,111 +601,30 @@ class datetime:
                     if len(value) < len(parameters)
                     else DatconErrorType.TOO_MANY_VALUES
                 )
-                raise DatconError(err, "stamp", template, value, self.ANCHOR_RAWTIME, True)
+                raise DatconError(error_type=DatconErrorType.INCORRECT_VALUE,
+                  place=["stamp","int"],
+                  template=parameters,
+                  value=value,
+                  anchor_date=None,
+                  critical=True)
 
-            return self.finalize_full_datetime(value, parameters, self.epoch_type)
+            return self.finalize_full_datetime(value, parameters, self.epoch_type, "fulldatetime")
 
         else:
-            raise DatconError([
-                DatconErrorType.UNCORRECT_INPUT_VALUE,
-                template, value,
+            raise DatconError(
+                DatconErrorType.INCORRECT_VALUE,
                 ["stamp", "unsupported_type"],
-                True
-            ])
-
+                template, value, self.ANCHOR_RAWTIME,
+                True)
     @classmethod
-    def strptime(cls, input_value: str, template: str, epoch_type: str = AC, anchor_date: "datetime" = 0):
-        """
-        Parse a string according to `template` (e.g. "YmdHis") into a datetime.
-        """
-
-        cls.ANCHOR_RAWTIME = Calendar_converter(anchor_date )
-        
-        
-        self = cls()
-        self.epoch_type = epoch_type
-
-        if not isinstance(input_value, str):
-            raise DatconError([
-                DatconErrorType.UNCORRECT_INPUT_VALUE,
-                template, input_value,
-                ["strptime", "input_value_wasnt_str"],
-                True
-            ])
-
-        # Build the list of units to extract
-        parameters = []
-        corrector = {"y": "Y", "D": "d", "H": "h", "S": "s"}
-        for ch in template:
-            if ch not in ("%", "f"):
-                u = corrector.get(ch, ch)
-                if u in self.time_units and u not in parameters:
-                    parameters.append(u)
-
-        # Extract numeric substrings
-        NUMS = set("0123456789.")
-        vals = []
-        buf = ""
-        for ch in input_value:
-            if ch in NUMS:
-                buf += ch
-            else:
-                if buf:
-                    vals.append(float(buf))
-                    buf = ""
-        if buf:
-            vals.append(float(buf))
-        
-        # Ensure counts match
-        if len(vals) != len(parameters):
-            err = (
-                DatconErrorType.TOO_MANY_PARAMETERS
-                if len(vals) < len(parameters)
-                else DatconErrorType.TOO_MANY_VALUES
-            )
-            raise DatconError(err,"strptime",template,vals,self.ANCHOR_RAWTIME,True)
-
-        # Finalize and return
-        return self.finalize_full_datetime(vals, parameters, self.epoch_type, "fulldatetime", )
-    @classmethod
-    def intptime(cls, value: list[int], template: str, epoch_type: str = AC, anchor_date=0):
-        self = cls()
-        cls.ANCHOR_RAWTIME = Calendar_converter(anchor_date)
-        self.epoch_type = epoch_type
-
-        # 1) Validate that every item in value is numeric
-        for item in value:
-            if not isinstance(item, (int, float)):
-                err = DatconErrorType.UNCORRECT_INPUT_VALUE
-                raise DatconError(err,"intptime",template,value,self.ANCHOR_RAWTIME,True)
-
-        # 2) Build the list of expected parameters using the same corrector logic as strptime
-        corrector = {"y": "Y", "D": "d", "H": "h", "S": "s"}
-        parameters = []
-        for ch in template:
-            u = corrector.get(ch, ch)
-            if u in cls().time_units and u not in parameters:
-                parameters.append(u)
-
-        # 3) Now ensure the counts match
-        if len(value) != len(parameters):
-            err = (
-                DatconErrorType.TOO_MANY_PARAMETERS
-                if len(value) < len(parameters)
-                else DatconErrorType.TOO_MANY_VALUES
-            )
-            raise DatconError(err, "intptime",template,value,self.ANCHOR_RAWTIME,True)
-
-        # 4) Finally, hand off to your normal finalizer
-        return self.finalize_full_datetime(value, parameters, self.epoch_type)
-    @classmethod
-    def operand(cls,offset_seconds: float,reverse: bool = False,anchor_date=0):
-
+    def operand(cls,offset_seconds: float | int,reverse: bool = False,anchor_date: float | int = 0) -> "datetime":
         """
         Treat `offset_seconds` as seconds *after* year‑0, then subtract
         the anchor’s rawtime so that `rawtime = anchor – offset_seconds`.
         If `reverse=True`, flips the sign of `offset_seconds` first.
         """
+        if isinstance(offset_seconds,datetime):
+            offset_seconds = offset_seconds.rawtime
         # 1) Convert anchor_date → raw seconds base
         base = Calendar_converter(anchor_date)
 
@@ -574,7 +633,7 @@ class datetime:
             offset_seconds = -offset_seconds
 
         # 3) Compute the “true” rawtime = anchor – offset
-        absolute = base - offset_seconds
+        absolute = offset_seconds - base
 
         # 4) Decide era and magnitude for display
         if absolute < 0:
@@ -598,20 +657,93 @@ class datetime:
         inst.output     = [parts, "fulldatetime"]
         return inst
     @classmethod
-    def datetime(cls, value: list[int], epoch_type: str = AC, anchor_date=0):
+    def datetime(cls, value: list[int] | str = "0", epoch_type: EpochType = AC, anchor_date: float | int = 0) -> "datetime":
         self = cls()
-        cls.ANCHOR_RAWTIME = Calendar_converter(anchor_date)
-        self.epoch_type = epoch_type
-        return self.finalize_full_datetime(value, self.template, self.epoch_type)
+        parameters = []
+
+        if isinstance(value, str):
+
+            vals = []
+            buf = ""
+            NUMS = set("0123456789.")
+
+            traceback = True
+            for ch in value:
+                if ch in NUMS:
+                    buf += ch
+                    traceback = False
+                else:
+                    if buf:
+                        vals.append(float(buf))
+                        buf = ""
+            if buf:
+                vals.append(float(buf))
+            
+            if traceback:
+                vals = [0]
+
+            for i in range(len(vals)):
+                if i<(len(self.template)):
+                    parameters.append(self.template[i])
+                else:
+                    err = DatconErrorType.TOO_MANY_VALUES
+                    raise DatconError(err, ["datetime", "str"], self.template, vals, self.ANCHOR_RAWTIME, True)
+
+            return self.finalize_full_datetime(vals, parameters, self.epoch_type)
+        elif isinstance(value, (list, tuple)) and all(isinstance(item, (int, float)) for item in value):
+            if len(value) < 1:
+                value = [0]
+            cls.ANCHOR_RAWTIME = Calendar_converter(anchor_date)
+            self.epoch_type = epoch_type
+            return self.finalize_full_datetime(value, self.template, self.epoch_type)
+        else:
+            err = DatconErrorType.INCORRECT_VALUE
+            raise DatconError(err, ["datetime"], self.template, vals, self.ANCHOR_RAWTIME, True)
     @classmethod
-    def timedate(cls, value: list, epoch_type: str = AC, anchor_date=0):
+    def timedate(cls, value: list[int] | str = "0", epoch_type: EpochType = AC, anchor_date: float | int = 0) -> "datetime":
         self = cls()
-        cls.ANCHOR_RAWTIME = Calendar_converter(anchor_date)
-        self.epoch_type = epoch_type
-        rev_tmpl = list(reversed(self.template))
-        return self.finalize_full_datetime(value, rev_tmpl, self.epoch_type)
+        parameters = []
+        template = list(reversed(self.template))
+        if isinstance(value, str):
+
+            vals = []
+            buf = ""
+            NUMS = set("0123456789.")
+
+            traceback = True
+            for ch in value:
+                if ch in NUMS:
+                    buf += ch
+                    traceback = False
+                else:
+                    if buf:
+                        vals.append(float(buf))
+                        buf = ""
+            if buf:
+                vals.append(float(buf))
+            
+            if traceback:
+                vals = [0]
+
+            for i in range(len(vals)):
+                if i<(len(template)):
+                    parameters.append(template[i])
+                else:
+                    err = DatconErrorType.TOO_MANY_VALUES
+                    raise DatconError(err, ["timedate", "str"],template, vals, self.ANCHOR_RAWTIME, True)
+
+            return self.finalize_full_datetime(vals, parameters, self.epoch_type, "fulldatetime")
+        elif isinstance(value, (list, tuple)) and all(isinstance(item, (int, float)) for item in value):
+            if len(value) < 1:
+                value = [0]
+            cls.ANCHOR_RAWTIME = Calendar_converter(anchor_date)
+            self.epoch_type = epoch_type
+            return self.finalize_full_datetime(value, template, self.epoch_type)
+        else:
+            err = DatconErrorType.INCORRECT_VALUE
+            raise DatconError(err, ["timedate"], template, vals, self.ANCHOR_RAWTIME, True)
     @classmethod
-    def current_time(cls, anchor_date=0):
+    def current_time(cls, anchor_date: float | int = CENTRAL_EUROPEAN_TIMELINE) -> "datetime":
         """
         Returns the current real-world UTC time as [Y, m, d, h, i, s],
         without using the `datetime` module.
@@ -619,7 +751,9 @@ class datetime:
         raw = time.gmtime()  # returns struct_time in UTC
         now = [raw.tm_year, raw.tm_mon, raw.tm_mday, raw.tm_hour, raw.tm_min, raw.tm_sec]
         return datetime.datetime(now,AC, anchor_date)
-    def finalize_full_datetime(self, value, parameters: str, epoch_type: str, output_type="fulldatetime"):
+    def show(self) -> "datetime":
+        return datetime.operand(self.rawtime)  
+    def finalize_full_datetime(self, value, parameters: str, epoch_type: str, output_type="fulldatetime") -> "datetime":
         self.epoch_type = epoch_type
 
         template_lower = [key.lower() for key in self.template]
@@ -645,8 +779,8 @@ class datetime:
         parts = convert_rawtime_to_date(total_raw)
         self.output = [parts, output_type]
         return self     
-def convert_input_to_rawtime(value: list, parameters: list, hour_difference=0) -> float:
-    """Convert Y/m/d h:i:s into raw seconds and subtract anchor."""
+def convert_input_to_rawtime(value: list[int], parameters: list) -> float:
+    """Convert Y/m/d h:i:s into raw seconds and adds anchor."""
     
     def is_leap_year(y):
         return (y % 4 == 0 and y % 100 != 0) or (y % 400 == 0)
@@ -669,16 +803,15 @@ def convert_input_to_rawtime(value: list, parameters: list, hour_difference=0) -
     i = int(vals.get('i', 0))
     s = float(vals.get('s', 0))
 
-    total = days_since_epoch(Y, M, D) * 86400 + h * 3600 + i * 60 + s + hour_difference * 3600
+    total = days_since_epoch(Y, M, D) * 86400 + h * 3600 + i * 60 + s 
 
-    return float(total) - datetime.ANCHOR_RAWTIME
-def convert_rawtime_to_date(seconds: int | float) -> list:
+    return float(total) + datetime.ANCHOR_RAWTIME
+def convert_rawtime_to_date(seconds: float | int) -> list:
     """Convert rawtime into [Y, m, d, h, i, s], accounting for anchor."""
 
     def is_leap_year(y):
         return (y % 4 == 0 and y % 100 != 0) or (y % 400 == 0)
 
-    seconds += datetime.ANCHOR_RAWTIME
     days = int(seconds // 86400)
     rem = seconds % 86400
     Y = 0
@@ -774,7 +907,7 @@ def Calendar_converter(anchor: datetime | float | int = 0) -> float:
         return float(anchor)
     elif isinstance(anchor, datetime):
         return float(anchor.rawtime)
-    return 0.0
+    raise DatconError(error_type = DatconErrorType.INCORRECT_ANCHOR_VALUE, place = "Calendar_converter", anchor_date = anchor,critical = True  )
 
 __all__ = [
     "DatconErrorType",
@@ -790,3 +923,23 @@ __all__ = [
     "normalize_full",
     "Calendar_converter"
 ]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+a = datetime.current_time()
+
+print(a)
+
