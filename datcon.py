@@ -1,196 +1,168 @@
-#!bin cant remember the full stuff I had to write here srry
 from __future__ import annotations
 from enum import Enum
-__all__ = ["datetime", "datetime_support", "Maths_Support","AC","BC", "EpochType"]
+import ast
+
+__all__ = ["dat", "dat_support", "Maths_Support","AC","BC", "EpochType"]
+
 class EpochType(Enum):
+    """Enum representing era/epoch for dat objects. Members: AC ('ac') and BC ('bc'). Used to mark whether a dat's rawtime is positive (AC) or negative (BC)."""
     AC = "ac"  # After Christ (default)
     BC = "bc"  # Before Christ
-# Export enum for easier external use
-AC = EpochType.AC
-BC = EpochType.BC
-class Maths_Support:
-    """
-    Maths_Support provides arithmetic and comparison operations based on rawtime,
-    enabling datetime objects to support intuitive math operations directly.
 
-    These operations act upon the `rawtime` attribute, which represents time in seconds
-    from a defined epoch.
-    """
-    def __init__(self, rawtime:float) -> datetime:
+AC = EpochType.AC
+"""Alias for EpochType.AC exported for convenient external usage."""
+
+BC = EpochType.BC
+"""Alias for EpochType.BC exported for convenient external usage."""
+
+class Maths_Support:
+    """Mixin-like utility class that stores a numeric `rawtime` (seconds) and implements arithmetic and comparison dunder methods operating on that rawtime. Designed so dat objects can perform intuitive math (addition, subtraction, scaling, comparisons) based on seconds. It stores `rawtime` as a float and delegates creation of result objects to dat.operand when returning dat instances."""
+    
+    def __init__(self, rawtime:float) -> dat:
+        """Initialize a Maths_Support instance with a numeric `rawtime`. Side-effect: stores `self.rawtime` (float)."""
         self.rawtime = rawtime
-    def __add__(self, other) -> datetime:
-        """
-        Add a scalar value (seconds) or another datetime's rawtime to this instance.
-        Returns a new datetime object.
-        """
+
+    def __add__(self, other) -> dat:
+        """Add either another Maths_Support (adds their rawtime) or a numeric scalar (seconds). Returns a new dat via dat.operand(sum). Raises TypeError for unsupported types (code currently marks unsupported branches)."""
         if isinstance(other, Maths_Support):
-            return datetime.operand(self.rawtime + other.rawtime)
+            return dat.operand(self.rawtime + other.rawtime)
         elif isinstance(other, (int, float)):
-            return datetime.operand(self.rawtime + other)
-		#RAISE ISSUE 
-    def __sub__(self, other) -> datetime:
-        """
-        Subtract a scalar or another datetime's rawtime from this instance.
-        Returns a new datetime object.
-        """
+            return dat.operand(self.rawtime + other)
+
+    def __sub__(self, other) -> dat:
+        """Subtract another Maths_Support's rawtime or a numeric scalar from this instance's rawtime. Returns a new dat via dat.operand(difference). Unsupported types are intended to raise an error (placeholder in code)."""
         if isinstance(other, Maths_Support):
-            return datetime.operand(self.rawtime - other.rawtime)
+            return dat.operand(self.rawtime - other.rawtime)
         elif isinstance(other, (int, float)):
-            return datetime.operand(self.rawtime - other)
-		#RAISE ISSUE 
-    def __mul__(self, other) -> datetime:
-        """
-        Multiply this instance's rawtime with a scalar or another datetime's rawtime.
-        Useful for scaling durations.
-        Returns a new datetime object.
-        """
+            return dat.operand(self.rawtime - other)
+
+    def __mul__(self, other) -> dat:
+        """Multiply this instance's rawtime by another Maths_Support.rawtime or a numeric scalar. Returns a new dat via dat.operand(product). Unsupported types are not handled in the code and should result in an error."""
         if isinstance(other, Maths_Support):
-            return datetime.operand(self.rawtime * other.rawtime)
+            return dat.operand(self.rawtime * other.rawtime)
         elif isinstance(other, (int, float)):
-            return datetime.operand(self.rawtime * other)
-		#RAISE ISSUE 
-    def __truediv__(self, other) -> datetime:
-        """
-        Perform true division of this instance's rawtime by a scalar or another rawtime.
-        Returns a new datetime object.
-        """
+            return dat.operand(self.rawtime * other)
+
+    def __truediv__(self, other) -> dat:
+        """True-divide this instance's rawtime by another Maths_Support.rawtime or a numeric scalar and return a new dat via dat.operand(quotient). Division by zero and unsupported types are not explicitly handled in the code and should be guarded by callers."""
         if isinstance(other, Maths_Support):
-            return datetime.operand(self.rawtime / other.rawtime)
+            return dat.operand(self.rawtime / other.rawtime)
         elif isinstance(other, (int, float)):
-            return datetime.operand(self.rawtime / other)
-		#RAISE ISSUE 
-    def __floordiv__(self, other) -> datetime:
-        """
-        Perform floor division on rawtime.
-        Rounds down the result to the nearest integer.
-        Returns a new datetime object.
-        """
+            return dat.operand(self.rawtime / other)
+
+    def __floordiv__(self, other) -> dat:
+        """Floor-divide this instance's rawtime by another Maths_Support.rawtime or a numeric scalar, returning a new dat produced by dat.operand(floor_result). Unsupported types are marked in the code with placeholders."""
         if isinstance(other, Maths_Support):
-            return datetime.operand(self.rawtime // other.rawtime)
+            return dat.operand(self.rawtime // other.rawtime)
         elif isinstance(other, (int, float)):
-            return datetime.operand(self.rawtime // other)
-		#RAISE ISSUE 
-    def __mod__(self, other) -> datetime:
-        """
-        Return the remainder after dividing rawtime by scalar or another rawtime.
-        Useful for measuring periodic cycles.
-        Returns a float.
-        """
+            return dat.operand(self.rawtime // other)
+
+    def __mod__(self, other) -> dat:
+        """Return the remainder of dividing this instance's rawtime by another Maths_Support.rawtime or a numeric scalar. Unlike other arithmetic dunders, this method returns a plain numeric remainder (float) rather than a dat object. Unsupported types are left as placeholders."""
         if isinstance(other, Maths_Support):
             return self.rawtime % other.rawtime
         elif isinstance(other, (int, float)):
             return self.rawtime % other
-		#RAISE ISSUE 
-    def __pow__(self, other) -> datetime:
-        """
-        Raise rawtime to a given power (scalar or another rawtime).
-        Returns a new datetime object.
-        """
+
+    def __pow__(self, other) -> dat:
+        """Raise this instance's rawtime to the power of another Maths_Support.rawtime or numeric scalar, returning a new dat via dat.operand(result). Unsupported types are marked as TODO in the code."""
         if isinstance(other, Maths_Support):
-            return datetime.operand(self.rawtime ** other.rawtime)
+            return dat.operand(self.rawtime ** other.rawtime)
         elif isinstance(other, (int, float)):
-            return datetime.operand(self.rawtime ** other)
-		#RAISE ISSUE 
-    # Comparison operations return boolean values
-    def __eq__(self, other) -> datetime:
-        """Check equality between this instance and another rawtime or scalar."""
+            return dat.operand(self.rawtime ** other)
+
+    def __eq__(self, other) -> dat:
+        """Equality comparison between this instance's rawtime and a Maths_Support.rawtime or numeric scalar; returns a boolean."""
         if isinstance(other, Maths_Support):
             return self.rawtime == other.rawtime
         elif isinstance(other, (int, float)):
             return self.rawtime == other
-		#RAISE ISSUE 
-    def __gt__(self, other) -> datetime:
-        """Greater-than comparison."""
+
+    def __gt__(self, other) -> dat:
+        """Greater-than comparison against another Maths_Support or numeric scalar; returns a boolean."""
         if isinstance(other, Maths_Support):
             return self.rawtime > other.rawtime
         elif isinstance(other, (int, float)):
             return self.rawtime > other
-		#RAISE ISSUE 
-    def __ge__(self, other) -> datetime:
-        """Greater-than-or-equal-to comparison."""
+
+    def __ge__(self, other) -> dat:
+        """Greater-than-or-equal comparison against another Maths_Support or numeric scalar; returns a boolean."""
         if isinstance(other, Maths_Support):
             return self.rawtime >= other.rawtime
         elif isinstance(other, (int, float)):
             return self.rawtime >= other
-		#RAISE ISSUE 
-    def __lt__(self, other) -> datetime:
-        """Less-than comparison."""
+
+    def __lt__(self, other) -> dat:
+        """Less-than comparison against another Maths_Support or numeric scalar; returns a boolean."""
         if isinstance(other, Maths_Support):
             return self.rawtime < other.rawtime
         elif isinstance(other, (int, float)):
             return self.rawtime < other
-		#RAISE ISSUE 
-    def __le__(self, other) -> datetime:
-        """Less-than-or-equal-to comparison."""
+
+    def __le__(self, other) -> dat:
+        """Less-than-or-equal comparison against another Maths_Support or numeric scalar; returns a boolean."""
         if isinstance(other, Maths_Support):
             return self.rawtime <= other.rawtime
         elif isinstance(other, (int, float)):
             return self.rawtime <= other
-		#RAISE ISSUE 
-    def __ne__(self, other) -> datetime:
-        """Check inequality between this instance and another."""
+
+    def __ne__(self, other) -> dat:
+        """Inequality comparison against another Maths_Support or numeric scalar; returns a boolean."""
         if isinstance(other, Maths_Support):
             return self.rawtime != other.rawtime
         elif isinstance(other, (int, float)):
             return self.rawtime != other
-		#RAISE ISSUE 
-    def __repr__(self,other = None) -> None:
-        """
-        Prevent accidental use of __repr__ unless implemented explicitly.
-        Triggers a DatconError to force conscious developer decisions.
-        """
-		#RAISE ISSUE 
-class datetime_support:
+class dat_support:
+    """Mixin providing high-level property views and conversion helpers for dat instances. Exposes many convenient read-only properties (year, month, day, hour, minute, second, time, date) that behave differently depending on the `converter` mode: 0 -> return raw stored components, 1 -> convert from `rawtime` (seconds) to the requested unit, 2 -> return `dat.datetime` objects constructed from stored components. Also holds `data`, `source` and a `converter` flag which are populated from the dat's `output` during initialization."""
 
     def __init__(self):
+        """Initialize dat_support by reading `self.output` and setting `self.data` (component list) and `self.source` (string describing which view), and set `self.converter` to 0. Expects `self.output` to be populated by dat before calling."""
         self.data = self.output [0]
         self.source = self.output[1]
         self.converter = 0
+
     @property
     def _convert_to_(self):
+        """Property that sets `self.converter = 1` and returns self. When used before a numeric property it switches the behavior to 'convert from rawtime to unit' mode."""
         self.converter = 1
         return self
+
     @property
     def _object_only_accounts_for_(self):
+        """Property that sets `self.converter = 2` and returns self. When used before a property it makes that property return a dat.datetime object built from the underlying components."""
         self.converter = 2
         return self
 
     @property
-    def year(self) -> datetime | float | int:
-        
+    def year(self) -> dat | float | int:
+        """Property returning the year. Behavior depends on converter: converter==1 -> returns exact years computed from `rawtime` (float, accounts for leap years); converter==2 -> returns dat.datetime([year]) (a dat instance representing the year); else returns the stored data component as float."""
         def is_leap_year(year):
-            """Return True if year is a leap year in the Gregorian calendar."""
             return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
         def seconds_in_year(year):
-            """Return number of seconds in the given year."""
             days = 366 if is_leap_year(year) else 365
             return days * 24 * 60 * 60
         def seconds_to_exact_years(seconds):
-            """Convert seconds into exact years, considering leap years."""
             years_passed = 0
             year = 0
-
             while seconds >= seconds_in_year(year):
                 seconds -= seconds_in_year(year)
                 year += 1
                 years_passed += 1
-
             fraction_of_year:float | int = seconds / seconds_in_year(year)
             total_years = years_passed + fraction_of_year
-
             return total_years
         if self.converter == 1:
             return seconds_to_exact_years(self.rawtime)
         elif self.converter == 2:
-            return datetime.datetime([self.data[0]])
+            return dat.datetime([self.data[0]])
         return float(self.data[0])
-    @property  
-    def month(self) -> datetime | float | int:
 
+    @property  
+    def month(self) -> dat | float | int:
+        """Property returning the month. converter==1 -> returns months as fractional months derived from `rawtime` (accounts for month lengths and leap years); converter==2 -> returns dat.datetime([1, month]); else returns stored month component as float."""
         def is_leap_year(year):
             return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
         def days_in_month(year, month):
-            """Return number of days in a given month of a given year."""
             if month in {1, 3, 5, 7, 8, 10, 12}:
                 return 31
             elif month in {4, 6, 9, 11}:
@@ -202,78 +174,81 @@ class datetime_support:
         def seconds_in_month(year, month):
             return days_in_month(year, month) * 24 * 60 * 60
         def seconds_to_exact_months(seconds):
-            """
-            Convert seconds into exact months, considering leap years and month lengths.
-            Starts counting from (year=0, month=0).
-            """
-            year, month = 0, 1  # start at "year 0, month 1"
+            year, month = 0, 1
             months_passed = 0
-
             while seconds >= seconds_in_month(year, month):
                 seconds -= seconds_in_month(year, month)
                 months_passed += 1
-                # Increment month/year
                 month += 1
                 if month > 12:
                     month = 1
                     year += 1
-
-            # Fraction of current month
             fraction_of_month = seconds / seconds_in_month(year, month)
             total_months = months_passed + fraction_of_month
-
             return total_months 
         if self.converter == 1:
             return seconds_to_exact_months(self.rawtime)
         elif self.converter == 2:
-            return datetime.datetime([1,self.data[1]])
+            return dat.datetime([1,self.data[1]])
         return float(self.data[1])
+
     @property
-    def day(self) ->datetime | float | int:
+    def day(self) ->dat | float | int:
+        """Property returning the day. converter==1 -> returns days derived from `rawtime` (seconds -> days); converter==2 -> returns dat.datetime([0,0,day]); else returns stored day component as float."""
         def seconds_to_days(seconds: float) -> float:
-            SECONDS_PER_DAY = 24 * 60 * 60  # 86400
+            SECONDS_PER_DAY = 24 * 60 * 60
             return seconds / SECONDS_PER_DAY
         if self.converter == 1:
             return seconds_to_days(self.rawtime)
         elif self.converter == 2:
-            return datetime.datetime([0,0,self.data[2]])
+            return dat.datetime([0,0,self.data[2]])
         return float(self.data[2])
+
     @property
-    def hour(self) ->datetime | float | int:
+    def hour(self) ->dat | float | int:
+        """Property returning the hour. converter==1 -> returns hours computed from `rawtime` (rawtime/3600); converter==2 -> returns dat.datetime([1,1,1,hour]); else returns stored hour component as float."""
         if self.converter == 1:
             return self.rawtime/3600
         if self.converter == 2:
-            return datetime.datetime([1,1,1,self.data[3]])
+            return dat.datetime([1,1,1,self.data[3]])
         return float(self.data[3])
+
     @property
-    def minute(self) ->datetime | float | int:
+    def minute(self) ->dat | float | int:
+        """Property returning the minute. converter==1 -> returns minutes from `rawtime` (rawtime/60); converter==2 -> returns dat.datetime([1,1,1,0,minute]); else returns stored minute component as float."""
         if self.converter == 1:
             return self.rawtime / 60
         elif self.converter == 2:
-            return datetime.datetime([1,1,1,0,self.data[4]])
+            return dat.datetime([1,1,1,0,self.data[4]])
         return float(self.data[4])
+
     @property
-    def second(self) ->datetime | float | int:
+    def second(self) ->dat | float | int:
+        """Property returning the second. converter==1 -> returns seconds (rawtime); converter==2 -> returns dat.datetime([1,1,1,0,0,second]); else returns stored second component as float."""
         if self.converter == 1:
             return self.rawtime
         elif self.converter == 2:
-            return datetime.datetime([1,1,1,0,0,self.data[5]])
+            return dat.datetime([1,1,1,0,0,self.data[5]])
         return float(self.data[5])
+
     @property
-    def time(self) -> datetime | list[int | float] | float | int:
+    def time(self) -> dat | list[int | float] | float | int:
+        """Property returning a time view: converter==1 -> returns hour * minute * second (product of those conversions — note this behavior is unusual and likely not what most users expect); converter==2 -> returns dat.datetime built from full time components; else returns first three stored components (`data[0:3]`)."""
         if self.converter == 1:
             return self.hour*self.minute*self.second
         elif self.converter == 2:
-            return datetime.datetime([1,1,1,self.data[3],self.data[4],self.data[5]])
+            return dat.datetime([1,1,1,self.data[3],self.data[4],self.data[5]])
         return self.data[0:3]
+
     @property
-    def date(self) -> datetime | list[int] | float | int:
+    def date(self) -> dat | list[int] | float | int:
+        """Property returning a date view: converter==1 -> returns year * month * day (product — again nonstandard and should be used with care); converter==2 -> returns dat.datetime built from date components; else returns stored date slice (`data[3:6]`)."""
         if self.converter == 1:
             return self.year*self.month*self.day
         elif self.converter == 2:
-            return datetime.datetime([self.data[0],self.data[1],self.data[2]])
+            return dat.datetime([self.data[0],self.data[1],self.data[2]])
         return self.data[3:6]
-class datetime(Maths_Support,datetime_support):
+class dat(Maths_Support,dat_support):
 
     TIME_UNITS:dict[str,int] = {
             "y": 31536000,
@@ -289,18 +264,19 @@ class datetime(Maths_Support,datetime_support):
     _SENTINEL_VALUE_: object = object()
     CENTRAL_EUROPEAN_TIMELINE:int = int(7200)
 
-    def __init__(self,rawtime:float | int = 0,template:str = ['y', 'm', 'd', 'h', 'mi', 's'],anchor:float | int = 0,output:list = [None,None]):
-        self.rawtime:float | int = rawtime
-        self.anchor:float | int = anchor
-        self.converter = 0
-        
-        self.template:str = template
-        self.output:list = output
-        self.epoch_type = AC if rawtime >= 0 else BC
+    def __init__(self):
+        self.rawtime:float | int = 0
+        self.drift:float | int = 0
+        self.converter:int = 0
+        self.min_clock_value:int = [1,1,1]  #has to do with whats the year, month, day lowest accepted value
 
-    def __str__(self) -> datetime :
+
+        self.template:str = ['y', 'm', 'd', 'h', 'mi', 's']
+        self.output:list = [None,None]
+        self.epoch_type = AC if self.rawtime >= 0 else BC
+    def __str__(self) -> dat :
+
         data, source = self.output
-
         Y, M, D, h, mi, s = data
 
         sec = int(s) if float(s).is_integer() else float(s)
@@ -312,7 +288,7 @@ class datetime(Maths_Support,datetime_support):
         # Determine self.epoch_type.name and adjusted values based on calendar mode and rawtime
 
         # Format string based on source type
-        if source == "fulldatetime":
+        if source == "fulldat":
             return f"({Y:04}-{M:02}-{D:02} {h:02}:{mi:02}:{sec:02}){self.epoch_type.name}"
         elif source == "date":
             return f"({Y:04}-{M:02}-{D:02}) {self.epoch_type.name}"
@@ -332,29 +308,40 @@ class datetime(Maths_Support,datetime_support):
             return f"({sec:02}) {self.epoch_type.name}"
         else:
             return "No source Found"
+    
+    def __int__(self):
+        return int(self.rawtime)
+    
+    def __float__(self):
+        return self.rawtime
+    
+    # __iter__ allows conversion to list using list()
+    def __iter__(self):
+        return iter(self.output)
+    
     @classmethod
-    def operand(cls, base_rawtime: datetime | float | int,*, anchor_date: datetime | float | int = 0,reverse: bool = False) :
+    def operand(cls, base_rawtime: dat | float | int,*, drift: dat | float | int = 0,reverse: bool = False,min_clock_value = [1,1,1]) :
         """
-        Treat `base_rawtime` as seconds from the epoch, optionally subtracting an anchor.
+        Treat `base_rawtime` as seconds from the epoch, optionally subtracting drift.
         If `reverse=True`, flips the sign of `base_rawtime`.
         
-        Returns a new datetime object with the correct epoch and rawtime.
+        Returns a new dat object with the correct epoch and rawtime.
         """
         self = cls()
-
-        # If base_rawtime is a datetime instance, extract its rawtime
-        if isinstance(base_rawtime, datetime):
+        self.min_clock_value = min_clock_value
+        # If base_rawtime is a dat instance, extract its rawtime
+        if isinstance(base_rawtime, dat):
             base_rawtime = base_rawtime.rawtime
 
-        # 1) Convert anchor_date to a float seconds value
-        anchor_sec = self.anchor_converter(anchor_date)
+        # 1) Convert drift to a float seconds value
+        drift_sec = self.drift_converter(drift)
 
         # 2) Apply reverse flag if needed
         if reverse:
             base_rawtime = -base_rawtime
 
         # 3) Compute absolute rawtime: seconds since epoch
-        absolute_rawtime = base_rawtime - anchor_sec
+        absolute_rawtime = base_rawtime - drift_sec
 
         # 4) Determine epoch type (AC / BC) and magnitude for display
         if absolute_rawtime < 0:
@@ -370,13 +357,16 @@ class datetime(Maths_Support,datetime_support):
         # 6) Fill instance and return
         self.rawtime = absolute_rawtime
         self.epoch_type = era
-        self.output = [parts, "fulldatetime"]
-        self.anchor = anchor_sec
+        self.output = [parts, "fulldat"]   
+        self.drift = drift_sec
+        dat_support.__init__(self) #always forget that operand thoesnt run on finalize_full_dat lol
+
         return self
     @classmethod
-    def stamp(cls, input_value: list[int] | str = [0,1,1,0,0,0],input_template: list[str] | str = ['y', 'm', 'd', 'h', 'mi', 's'], epoch_type: EpochType = AC,*, anchor_date: datetime | float | int = 0) :
+    def stamp(cls, input_value: list[int] | str = [0,1,1,0,0,0],input_template: list[str] | str = ['y', 'm', 'd', 'h', 'mi', 's'], epoch_type: EpochType = AC,*, drift: dat | float | int = 0,min_clock_value = [1,1,1]) :
         self = cls() # creates an instance
-        self.anchor = self.anchor_converter(anchor_date)
+        self.min_clock_value = min_clock_value
+        self.drift = self.drift_converter(drift)
         value, self.template = self.value_template_extractor(input_value,input_template)
         if len(value)>6 or len(self.template)>6:
             #RAISE ISSUE    
@@ -384,39 +374,76 @@ class datetime(Maths_Support,datetime_support):
         if len(value) < len(self.template):
             #RAISE ISSUE
             pass
-        return self.finalize_full_datetime(value,epoch_type)
+        return self.finalize_full_dat(value,epoch_type)
     @classmethod
-    def datetime(cls, input_value: datetime | list[int] | str = [0,1,1,0,0,0], epoch_type: EpochType = AC,*, anchor_date: datetime | float | int = 0,template_reverse = False):
+    def datetime(cls, input_value: dat | list[int] | str = [0,1,1,0,0,0], epoch_type: EpochType = AC,*, drift: dat | float | int = 0,template_reverse = False,min_clock_value = [1,1,1]):
         """
-        creates a datetime object ussing the inputted values while autofilling in case of a lack of does,\n
+        creates a dat object ussing the inputted values while autofilling in case of a lack of does,\n
         by default it follows the `[year,month,day,hour,minute,second]` sequence,\n
         if template_reverse is active, it will go from seconds to years instead 
         """
         self = cls() # creates an instance
 
         template = ['y', 'm', 'd', 'h', 'mi', 's'][::-1] if template_reverse else ['y', 'm', 'd', 'h', 'mi', 's']
-
-        self.anchor = self.anchor_converter(anchor_date)
+        self.min_clock_value = min_clock_value
+        self.drift = self.drift_converter(drift)
         value, self.template = self.value_template_extractor(input_value,template)
 
         if len(value)>6 or len(value) < 6:
             #RAISE ISSUE    
             pass
-        return self.finalize_full_datetime(value,epoch_type)
+        return self.finalize_full_dat(value,epoch_type)
     @classmethod
-    def current_time(cls,*, anchor_date: float | int = 0) -> datetime:
+    def current_time(cls,*, drift: float | int = 0) -> dat:
         """
         Returns the current real-world UTC time as [Y, m, d, h, i, s],\n
-        adds the anchor_date, `datetime may be passed as an anchor`
+        adds the drift, `dat may be passed as an drift`
         """
         import time
         raw = time.localtime()  # returns struct_time in UTC
         now = [raw.tm_year, raw.tm_mon, raw.tm_mday, raw.tm_hour, raw.tm_min, raw.tm_sec]
-        return datetime.datetime(now,AC, anchor_date = anchor_date)
+        return dat.datetime(now,AC, drift = drift)
     #-----Support-Methods-------
-    def finalize_full_datetime(self, value:list[int], epoch_type: str = AC, output_type="fulldatetime") -> datetime :
+    @classmethod
+    def input_compiler(cls,rawtime:float | int = 0,template:tuple[str] = ('y', 'm', 'd', 'h', 'mi', 's'),drift:float | int = 0,output:list[list[int | bool | str]]= [None,None],*,chunk_input:str = _SENTINEL_VALUE_,min_clock_value = [1,1,1]):
         """
-        standart method meant to convert a list of values into a datetime object, considering their pre-set parameters
+        providing uncorrect data might result in unexpected behaviour
+        """
+        self = cls()
+        self.min_clock_value = min_clock_value
+        if chunk_input == cls._SENTINEL_VALUE_:
+            
+            self.rawtime = rawtime
+            if not isinstance(self.rawtime, (int, float)):
+                #RAISE ISSUE
+                raise ValueError("we believe you might have wanted to usse {chunk_input = }, please try again, rawtime cant be given a non number value")
+            self.drift= drift
+            self.converter = 0
+            
+            self.template= template
+            self.output= output
+            self.epoch_type = AC if rawtime >= 0 else BC
+        else:
+            pieces = chunk_input.strip() 
+            for item in ["(",")"," "]:
+                pieces = pieces.replace(f"{item}","")
+            pieces = pieces.split("|")
+            self.rawtime = float(pieces[0])
+            self.drift= float(pieces[1])
+            #self.template ya esta descrito perfectamente en el init ._.
+            
+            self.output= [ast.literal_eval(pieces[2]), "fulldat"]
+
+            self.epoch_type = AC if rawtime >= 0 else BC
+
+        return self      
+    @property
+    def export_compiler(self) -> str:
+        "converts the important attributes of the dat object into a string, in such a format that input_compiler will understand it"
+        return f"({self.rawtime} | {self.drift} | {self.output[0]} | {self.epoch_type})"
+    def finalize_full_dat(self, value:list[int], epoch_type: str = AC, output_type="fulldat",) -> dat :
+        """
+        standart method meant to convert a list of values into a dat object, considering their pre-set parameters
         """
         template_value_diccionary = {'y':0, 'm':1, 'd':1, 'h':0, 'mi':0, 's':0}
         for i in range(len(self.template)):
@@ -436,11 +463,8 @@ class datetime(Maths_Support,datetime_support):
         self.rawtime = total_raw
     
         parts = self.convert_rawtime_to_date(total_raw)
-
-
-
         self.output = [parts, output_type]
-        datetime_support.__init__(self)
+        dat_support.__init__(self)
         return self   
     def value_template_extractor(self, value: str | list[float | int], template: str) -> list[int] | list[str]:
         """
@@ -498,7 +522,7 @@ class datetime(Maths_Support,datetime_support):
         return [value, template]
     def convert_input_to_rawtime(self, template_value_diccionary: dict[str, float]) -> float:
         """
-        Convert Y/m/d h:i:s into raw seconds and add anchor. Uses exact calendar days (handles leap years)
+        Convert Y/m/d h:i:s into raw seconds and add drift. Uses exact calendar days (handles leap years)
         and assumes input dict fields may be floats. Relies on normalize_full producing integer Y,M,D,h,mi
         and float s (seconds).
         """
@@ -539,17 +563,17 @@ class datetime(Maths_Support,datetime_support):
         s = float(vals.get("s", 0))
 
         total_days = days_since_epoch(Y, M, D)
-        total = total_days * 86400 + h * 3600 + i * 60 + s
+        total = total_days * 86400 + h * 3600 + i * 60 + round(s,4)
 
-        return float(total) + self.anchor
-    def anchor_converter(self, anchor_date: datetime | float | int) -> float:
+        return float(total) + self.drift
+    def drift_converter(self, drift: dat | float | int) -> float:
         """
-        converts anchors into floats for more homogenous handling across methods
+        converts drifts into floats for more homogenous handling across methods
         """
-        if isinstance(anchor_date, (float, int)):
-            return float(anchor_date)
-        elif isinstance(anchor_date, datetime):
-            return anchor_date.rawtime
+        if isinstance(drift, (float, int)):
+            return float(drift)
+        elif isinstance(drift, dat):
+            return drift.rawtime
         else:
             # RAISE ISSUE
             pass
@@ -677,16 +701,16 @@ class datetime(Maths_Support,datetime_support):
                 break
 
         return {
-            "y": int(Y if Y >= 1 else 1),
-            "m": int(M if M >= 1 else 1),
-            "d": int(day if day >= 1 else 1),
+            "y": int(Y if Y >= self.min_clock_value[0] else 1),
+            "m": int(M if M >= self.min_clock_value[1] else 1),
+            "d": int(day if day >= self.min_clock_value[2] else 1),
             "h": int(h_int),
             "mi": int(mi_int),
             "s": float(sf),
         }
     def convert_rawtime_to_date(self, seconds: float | int) -> list:
         """
-        Convert rawtime into [Y, m, d, h, i, s], accounting for anchor.
+        Convert rawtime into [Y, m, d, h, i, s], accounting for drift.
         """
 
         def is_leap_year(y):
@@ -720,9 +744,5 @@ class datetime(Maths_Support,datetime_support):
         i = int(rem // 60)
         s = rem % 60
 
-        return [Y, M, D, h, i, float(s)]
+        return [Y, M, D, h, i, float(round(s,4))]
 
-
-a =datetime.datetime([2025,10,2])._object_only_accounts_for_.year
-
-print(a)
