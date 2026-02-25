@@ -8,16 +8,180 @@ public class datetime {
 
     public static void main(String[] args) {
         
-        String content = "{0,0,0,0,0,0}";
-        Dat a = Dat.datetime(content, Dat.AC,false);
-        Dat b = Dat.operand(0);
-        System.out.println(a + " " + a.rawtime);
+        String content = "{2007,7,19}";
+
+        Dat.setBaseValues(new int[] {0,1,1});
+
+        Dat b = Dat.datetime("2026,2,25,10,37", Dat.AC, false);
+
+        Dat a = Dat.datetime(content, Dat.AC, false);
+
+        System.out.println(a.sub(b));
+        
     }
 }
 
-class DatMath {
 
+class DatConv {
+
+    public List<Double> output = new ArrayList<>();
     protected double rawtime;
+    protected static int[] min_clock_value = {1,1,1};
+    
+    private int converter;
+    
+
+    public DatConv() {
+        converter = 0;
+    }
+
+
+    public Dat _convert_to_() {
+        converter = 1;
+        return (Dat) this;
+    }
+
+    public Dat _object_only_accounts_for() {
+        converter = 2;
+        return (Dat) this;
+    }
+
+    public Object year() {
+        if (converter == 1) {
+            return seconds_to_exact_years(this.rawtime);
+        } else if (converter == 2) {
+            return Dat.datetime(String.valueOf(this.output.get(0)), Dat.AC, false);
+        }
+        return this.output.get(0);
+    }
+
+    public Object month() {
+        if (this.converter == 1) {
+            return seconds_to_exact_months((int) this.rawtime);
+        }
+        if (this.converter == 2) {
+            String select = 1 + "," + this.output.get(1);
+            return Dat.datetime(select, Dat.AC, false);
+        }
+        return this.output.get(1);
+    }
+
+    public Object day() {
+        if (this.converter == 1) {
+            return seconds_to_days((Double) this.rawtime);
+        }
+        if (this.converter == 2) {
+            String select = 1 + "," + 1 + "," + this.output.get(2);
+            return Dat.datetime(select, Dat.AC, false);
+        }
+        return this.output.get(2);
+    }
+
+    public Object hour() {
+        if (this.converter == 1) {
+            return this.rawtime / 3600;
+        }
+        if (this.converter == 2) {
+            return Dat.datetime(new double[]{1, 1, 1, this.output.get(3)}, Dat.AC, false);
+        }
+        return this.output.get(3);
+    }
+
+    public Object minute() {
+        if (this.converter == 1) {
+            return this.rawtime / 60;
+        } else if (this.converter == 2) {
+            return Dat.datetime(new double[]{1, 1, 1, 0, this.output.get(4)}, Dat.AC, false);
+        }
+        return this.output.get(4);
+    }
+
+    public Object second() {
+        if (this.converter == 1) {
+            return this.rawtime;
+        } else if (this.converter == 2) {
+            return Dat.datetime(new double[]{1, 1, 1, 0, 0, this.output.get(5)}, Dat.AC, false);
+        }
+        return this.output.get(5);
+    }
+
+    private double seconds_to_days(double seconds) {
+        final int SECONDS_PER_DAY = 24 * 60 * 60;
+        return seconds / SECONDS_PER_DAY;
+    }
+
+    private static int seconds_in_month(int year, int month) {
+
+        Dict baseline = new Dict(null);
+        baseline.add(1, 31);
+        baseline.add(3, 31);
+        baseline.add(5, 31);
+        baseline.add(7, 31);
+        baseline.add(8, 31);
+        baseline.add(10, 31);
+        baseline.add(12, 31);
+
+        baseline.add(4, 30);
+        baseline.add(6, 30);
+        baseline.add(9, 30);
+        baseline.add(11, 30);
+
+        baseline.add(2, is_leap_year(year) ? 29 : 28);
+
+        int value;
+        try {
+            value = (int) baseline.pull(month);  // FIXED (was year)
+        } catch (Exception e) {
+            return 0;
+        }
+
+        return value * 24 * 60 * 60;
+    }
+
+    private static double seconds_to_exact_months(int seconds) {
+        int year = 0;
+        int month = 1;
+        int month_passed = 0;
+
+        while (seconds >= seconds_in_month(year, month)) {
+            seconds -= seconds_in_month(year, month);
+            month_passed += 1;
+            month += 1;
+            if (month > 12) {
+                month = 1;
+                year += 1;
+            }
+        }
+
+        double fraction_of_month = (double) seconds / seconds_in_month(year, month);
+        return month_passed + fraction_of_month;
+    }
+
+    private static boolean is_leap_year(int y) {
+        return (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+    }
+
+    private static int seconds_in_year(int y) {
+        int days = is_leap_year(y) ? 366 : 365;
+        return days * 24 * 60 * 60;
+    }
+
+    private static double seconds_to_exact_years(double seconds) {
+        int year_passed = 0;
+        int year = 0;
+
+        while (seconds >= seconds_in_year(year)) {
+            seconds -= seconds_in_year(year);
+            year += 1;
+            year_passed += 1;
+        }
+
+        double fraction_of_year = seconds / seconds_in_year(year);
+        return year_passed + fraction_of_year;
+    }
+}
+class DatMath extends DatConv {
+
 
     public DatMath() {}
 
@@ -141,53 +305,20 @@ class DatMath {
         return this.rawtime != value;
     }
 }
-
 class Dat extends DatMath {
-
-    private static final Dict months = new Dict(Arrays.asList(
-            Arrays.asList(1, 2678400), Arrays.asList(2, 2419200), Arrays.asList(3, 2678400),
-            Arrays.asList(4, 2592000), Arrays.asList(5, 2678400), Arrays.asList(6, 2592000),
-            Arrays.asList(7, 2678400), Arrays.asList(8, 2678400), Arrays.asList(9, 2592000),
-            Arrays.asList(10, 2678400), Arrays.asList(11, 2592000), Arrays.asList(12, 2678400)));
-
-    private static final Dict TIME_UNITS = new Dict(Arrays.asList(Arrays.asList("y", 31536000), Arrays.asList("m", months), Arrays.asList("d", 86400), Arrays.asList("h", 3600), Arrays.asList("mi", 60), Arrays.asList("s", 1)));
 
     private static boolean INNUMBERS(char c) {
         return (c >= '0' && c <= '9') || c == '.';
     }
-
-
     protected enum EpochType { AC, BC }
     final static public EpochType AC = EpochType.AC;
     final static public EpochType BC = EpochType.BC;
 
-    private enum DataType { fulldat }
-    final static public DataType fulldat = DataType.fulldat;
-
     private static final String[] bs_template = {"y", "m", "d", "h", "mi", "s"};
-
-    int converter;
-    int[] min_clock_value = new int[3];
-
-    public DataType source = fulldat;
-    public List<Float> output = new ArrayList<>();
-    public EpochType epoch_type;
+    protected EpochType epoch_type;
 
     public Dat() {
         super();
-        Arrays.fill(min_clock_value, 1);
-    }
-
-    class TooManyValuesException extends Exception {
-        public TooManyValuesException(String msg) {
-            super(msg);
-        }
-    }
-
-    class TooManyParametersException extends Exception {
-        public TooManyParametersException(String msg) {
-            super(msg);
-        }
     }
 
     @Override
@@ -197,31 +328,51 @@ class Dat extends DatMath {
         int D = this.output.get(2).intValue();
         int h = this.output.get(3).intValue();
         int mi = this.output.get(4).intValue();
-        int s = Math.round(this.output.get(5));
+        long s = Math.round(this.output.get(5));
 
         String epochType = (this.rawtime < 0) ? BC.name() : AC.name();
 
-        if (this.source == fulldat) {
-            return String.format("(%04d-%02d-%02d %02d:%02d:%02d)%s", Y, M, D, h, mi, s, epochType);
-        } else {
-            return "Huuuuuuge errrorrr, idk what happeneeeneeddddd, error 404";
-        }
+        return String.format("(%04d-%02d-%02d %02d:%02d:%02d)%s", Y, M, D, h, mi, s, epochType);
+
+    }
+    
+    //getters
+
+    public long getRawtime(){
+        
+        return (long) rawtime;
+    }
+
+    public static void setBaseValues(int[] values){
+        min_clock_value = values;
     }
 
     public static Dat datetime(String rawinputvalue, EpochType epochType, boolean template_reverse) {
         Dat self = new Dat();
-        List<Float> value = self.value_extractor(rawinputvalue);
+        List<Double> value = Dat.value_extractor(rawinputvalue);
         self.epoch_type = epochType;
         String[] template = template_reverse ? new String[]{"s", "mi", "h", "d", "m", "y"} : new String[]{"y", "m", "d", "h", "mi", "s"};
         self.finalize_full_datetime(value, template);
         return self;
     }
 
-    public static Dat datetime(List<Number> rawinputvalue, EpochType epochType, boolean template_reverse) {
+    public static Dat datetime(List<Double> rawinputvalue, EpochType epochType, boolean template_reverse) {
         Dat self = new Dat();
-        List<Float> value = new ArrayList<>();
+        List<Double> value = new ArrayList<>();
         for (int i = 0; i < rawinputvalue.size() && i < Dat.bs_template.length; i++) {
-            value.add(rawinputvalue.get(i).floatValue());
+            value.add(rawinputvalue.get(i));
+        }
+        self.epoch_type = epochType;
+        String[] template = template_reverse ? new String[]{"s", "mi", "h", "d", "m", "y"} : new String[]{"y", "m", "d", "h", "mi", "s"};
+        self.finalize_full_datetime(value, template);
+        return self;
+    }
+
+    public static Dat datetime(double[] rawinputvalue, EpochType epochType, boolean template_reverse) {
+        Dat self = new Dat();
+        List<Double> value = new ArrayList<>();
+        for (int i = 0; i < rawinputvalue.length && i < Dat.bs_template.length; i++) {
+            value.add(rawinputvalue[i]);
         }
         self.epoch_type = epochType;
         String[] template = template_reverse ? new String[]{"s", "mi", "h", "d", "m", "y"} : new String[]{"y", "m", "d", "h", "mi", "s"};
@@ -230,17 +381,19 @@ class Dat extends DatMath {
     }
 
     public static Dat operand(double baserawtime) {
+
         Dat self = new Dat();
         self.epoch_type = (baserawtime < 0) ? BC : AC;
-        List<Float> parts = self.convert_rawtime_to_date(Math.abs(baserawtime));
+        List<Double> parts = self.convert_rawtime_to_date(Math.abs(baserawtime));
         self.output = parts;
+        self.rawtime = baserawtime;
         return self;
     }
 
     public static Dat stamp(String rawinput, String rawtemplate, EpochType epochType) {
         Dat self = new Dat();
-        List<Float> value = self.value_extractor(rawinput);
-        String[] template = self.template_extractor(rawtemplate);
+        List<Double> value = Dat.value_extractor(rawinput);
+        String[] template = Dat.template_extractor(rawtemplate);
         self.epoch_type = epochType;
         self.finalize_full_datetime(value, template);
         return self;
@@ -248,48 +401,56 @@ class Dat extends DatMath {
 
     public static Dat stamp(String rawinput, String[] rawtemplate, EpochType epochType) {
         Dat self = new Dat();
-        List<Float> value = self.value_extractor(rawinput);
-        String[] template = self.template_extractor(rawtemplate);
+        List<Double> value = Dat.value_extractor(rawinput);
+        String[] template = Dat.template_extractor(rawtemplate);
         self.epoch_type = epochType;
         self.finalize_full_datetime(value, template);
         return self;
     }
 
-    private String[] template_extractor(String rawString) {
+    private static String[] template_extractor(String rawString) {
         
-        List<String> returnable = new ArrayList<>();
+        String[] returnable = new String[bs_template.length];
+        Arrays.fill(returnable, null);
         for (String unit : Dat.bs_template) {
             if (rawString.contains(unit)) {
                 rawString = rawString.replace(unit, "");
-                returnable.add(unit);
+                for(int i = 0; i < returnable.length; i++){
+                    if(returnable[i] != null){
+                        returnable[i] = unit;
+                    }   
+                }
             }
         }
-        return returnable.toArray(new String[0]);
+        return returnable;
     }
 
-    private String[] template_extractor(String[] rawString) {
-        List<String> returnable = new ArrayList<>();
+    private static String[] template_extractor(String[] rawString) {
+        String[] returnable = new String[bs_template.length];
+
+        int i = 0;
         for (String unit : Dat.bs_template) {
             for (String rwtmp : rawString) {
                 if (rwtmp.contains(unit)) {
-                    returnable.add(unit);
+                    returnable[i] = unit;
+                    i+=1;
                     break;
                 }
             }
         }
-        return returnable.toArray(new String[0]);
+        return returnable;
     }
 
-    private List<Float> value_extractor(String value) {
+    private static List<Double> value_extractor(String value) {
         String one_number = "";
-        List<Float> several_numbers = new ArrayList<>();
+        List<Double> several_numbers = new ArrayList<>();
         for (int i = 0; i < value.length(); i++) {
             char c = value.charAt(i);
             if (INNUMBERS(c)) {
                 one_number += c;
             } else {
                 if (!one_number.isBlank()) {
-                    several_numbers.add(Float.parseFloat(one_number));
+                    several_numbers.add(Double.parseDouble(one_number));
                     one_number = "";
                 } else {
                     one_number = "";
@@ -297,49 +458,58 @@ class Dat extends DatMath {
             }
         }
         if (!one_number.isBlank()) {
-            several_numbers.add(Float.parseFloat(one_number));
+            several_numbers.add(Double.parseDouble(one_number));
         }
         return several_numbers;
     }
 
-    private void finalize_full_datetime(List<Float> value, String[] template) {
-        Dict template_value_dictionary = new Dict(Arrays.asList(
-                Arrays.asList("y", 0), Arrays.asList("m", 1), Arrays.asList("d", 1),
-                Arrays.asList("h", 0), Arrays.asList("mi", 0), Arrays.asList("s", 0)
-        ));
+    private void finalize_full_datetime(List<Double> value, String[] template) {
 
-        for (int i = 0; i < template.length; i++) {
-            for (Object key : template_value_dictionary) {
-                if (template[i].equals(key)) {
+
+        String[] template_value_dict = new String[] {"y","m","d","h","mi","s"};
+
+        double[] startresults = new double[template_value_dict.length];
+        Arrays.fill(startresults, 0);
+        for(int i = 0; i < template.length; i++){
+            for(String elm : template_value_dict){
+                if (template[i].equals(elm)){
                     try {
-                        template_value_dictionary.add(key, value.get(i));
-                        break;
+                        startresults[i] = value.get(i);
                     } catch (IndexOutOfBoundsException e) {
                         break;
                     }
                 }
             }
         }
+        
+        double total_raw = convert_input_to_rawtime(startresults);
 
-        double total_raw = convert_input_to_rawtime(template_value_dictionary);
+
+
         if (this.epoch_type == BC) { total_raw = -total_raw; }
+
         this.rawtime = total_raw;
+
         this.output = convert_rawtime_to_date(total_raw);
     }
 
-    private double convert_input_to_rawtime(Dict template_value_dictionary) {
+    private double convert_input_to_rawtime(double[] template_value_dictionary) {
         try {
-            int Y = ((Number) template_value_dictionary.pull("y")).intValue();
-            int M = ((Number) template_value_dictionary.pull("m")).intValue();
-            int D = ((Number) template_value_dictionary.pull("d")).intValue();
-            int h = ((Number) template_value_dictionary.pull("h")).intValue();
-            int i = ((Number) template_value_dictionary.pull("mi")).intValue();
-            int s = ((Number) template_value_dictionary.pull("s")).intValue();
+            int Y = (int) template_value_dictionary[0];
+            int M = (int) template_value_dictionary[1];
+            int D = (int) template_value_dictionary[2];
+            int h = (int) template_value_dictionary[3];
+            int i = (int) template_value_dictionary[4];
+            int s = (int) template_value_dictionary[5];
 
+
+
+
+
+            int threshold_min_clock_value = days_since_epoch(min_clock_value[0],min_clock_value[1],min_clock_value[2]) * 86400;
             int total_days = days_since_epoch(Y, M, D);
-            double total = (double) total_days * 86400 + h * 3600 + i * 60 + s;
-            if (total < 0)  //para evitar que día 0 de un rawtime de 0
-                total = 0;
+            double total = (double) total_days * 86400 + h * 3600 + i * 60 + s - threshold_min_clock_value;
+            total = (total < 0) ? 0 : total;  //para evitar que día 0 de un rawtime de 0
             return total;
         } catch (Exception e) {
             e.printStackTrace();
@@ -347,7 +517,7 @@ class Dat extends DatMath {
         }
     }
 
-    private int days_since_epoch(int Y, int M, int D) {
+    private static int days_since_epoch(int Y, int M, int D) {
         int days = 0;
         for (int y : new Range(0, Y, 1)) {
             days += is_leap_year(y) ? 366 : 365;
@@ -362,9 +532,9 @@ class Dat extends DatMath {
         return days + (D - 1);
     }
 
-    final int[] mdays = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    final static int[] mdays = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
 
-    private List<Float> convert_rawtime_to_date(double seconds) {
+    private List<Double> convert_rawtime_to_date(double seconds) {
         try {
             int days = (int) (seconds / 86400);
             double rem = seconds % 86400;
@@ -388,14 +558,14 @@ class Dat extends DatMath {
             int h = (int) (rem / 3600);
             rem %= 3600;
             int i = (int) (rem / 60);
-            float s = (float) (rem % 60);
+            double s = (double) (rem % 60);
 
-            List<Float> returnable = new ArrayList<>();
-            returnable.add((float) Math.max(Y,min_clock_value[0]));
-            returnable.add((float) Math.max(M, min_clock_value[1]));
-            returnable.add((float) Math.max(D, min_clock_value[2]));
-            returnable.add((float) h);
-            returnable.add((float) i);
+            List <Double> returnable = new ArrayList<>();
+            returnable.add((double) Math.max(Y,min_clock_value[0]));
+            returnable.add((double) Math.max(M, min_clock_value[1]));
+            returnable.add((double) Math.max(D, min_clock_value[2]));
+            returnable.add((double) h);
+            returnable.add((double) i);
             returnable.add(s);
             return returnable;
         } catch (Exception e) {
@@ -404,15 +574,12 @@ class Dat extends DatMath {
         }
     }
 
-    private boolean is_leap_year(int y) {
+    private static boolean is_leap_year(int y) {
         return (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
     }
-
 }
 
-/**
- * biggest Pythonist heist since the times of Mickel Jackson
- */
+
 class Dict implements Iterable<Object>{
     private class UnrecognizedKey extends Exception {
         public UnrecognizedKey(String message){super(message);}
